@@ -1,0 +1,21 @@
+[workspace.package]
+edition = "2024"
+
+[workspace]
+members = ["adapters"]
+
+resolver = "2"
+
+[workspace.dependencies]
+# Workspace
+adapters = { path = "adapters" }
+
+# External
+async-trait = "0.1.89"
+thiserror = "2.0.17"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+anyhow = "1"
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
+serde_json = "1"
+futures = "0.3"
