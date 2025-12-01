@@ -1,3 +1,67 @@
+//! Omniston WebSocket Event Parser
+//!
+//! This module defines a lightweight JSON-RPC event parser used for consuming
+//! Omniston's RFQ (Request-For-Quote) WebSocket feed. Omniston sends all quote
+//! updates, heartbeat messages, acknowledgements, and control signals through a
+//! single `"method": "event"` WebSocket channel. Messages follow the structure:
+//!
+//! ```jsonc
+//! {
+//!   "jsonrpc": "2.0",
+//!   "method": "event",
+//!   "params": {
+//!     "subscription": <u64>,
+//!     "result": {
+//!       "event": { /* event variant */ }
+//!     }
+//!   }
+//! }
+//! ```
+//!
+//! The parser converts each incoming raw JSON string into a strongly-typed
+//! `OmnistonEvent` enum variant:
+//!
+//! - **Ack** – RFQ request acknowledged with an `rfq_id`  
+//! - **QuoteUpdated** – Fully typed decoded quote with routes & swap params  
+//! - **NoQuote** – Resolver currently cannot route the desired RFQ  
+//! - **KeepAlive** – Heartbeat sent every ~5 seconds  
+//! - **Unsubscribed** – RFQ stream explicitly closed by server  
+//! - **Unknown** – Forward-compatibility fallback for new or undocumented events  
+//!
+//! The parser also handles:
+//!
+//! - Initial `"result": <subscription-id>` messages which must be ignored  
+//! - Missing/invalid JSON (returns error)  
+//! - Missing `"params"` (returns `None`)  
+//! - Automatic fallthrough to `Unknown` for event shapes not yet supported  
+//!
+//! This module is intentionally small, stateless, and pure: the parser does not
+//! maintain WebSocket state or RFQ session lifecycle. It is designed to be used
+//! by higher-level components, such as the RFQ engine, spread monitor,
+//! rolling-window pricing pipeline, or arbitrage detectors.
+//!
+//! All edge cases, including malformed events, forward-compatibility behavior,
+//! and minimal quote deserialization, are covered by the accompanying test
+//! suite (`#[cfg(test)]` below).
+//!
+//! Usage:
+//!
+//! ```rust
+//! if let Some(event) = parse_omniston_event(raw_ws_message)? {
+//!     match event {
+//!         OmnistonEvent::Ack { rfq_id } => { /* ... */ }
+//!         OmnistonEvent::QuoteUpdated(q) => { /* process quote */ }
+//!         OmnistonEvent::NoQuote => { /* retry or ignore */ }
+//!         OmnistonEvent::KeepAlive => { /* maintain connection */ }
+//!         OmnistonEvent::Unknown(v) => { /* log + ignore */ }
+//!         _ => {}
+//!     }
+//! }
+//! ```
+//!
+//! This parser is the core building block for any higher-level logic that needs
+//! reliable, typed real-time access to Omniston quotes.
+
 use crate::omniston::models::*;
 use serde::Deserialize;
 use serde_json::Value;
