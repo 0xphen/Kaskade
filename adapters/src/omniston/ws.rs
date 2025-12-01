@@ -59,14 +59,14 @@ impl OmnistonWsClient {
                     "address": ask_asset
                 },
                 "amount": { "bid_units": bid },
-                "referrer_address": { "blockchain": 607, "address": "" },
+               // "referrer_address": { "blockchain": 607, "address": "" },
                 "referrer_fee_bps": 0,
                 "settlement_methods": [0], // Only swap supported
                 "settlement_params": {
                     "max_price_slippage_bps": 100,
                     "max_outgoing_messages": 4,
                     "gasless_settlement": 1,
-                    "flexible_referrer_fee": false
+                    "flexible_referrer_fee": true
                 }
             })
         } else {
@@ -80,14 +80,14 @@ impl OmnistonWsClient {
                     "address": ask_asset
                 },
                 "amount": { "ask_units": ask_units.unwrap() },
-                "referrer_address": { "blockchain": 607, "address": "" },
+                // "referrer_address": { "blockchain": 607, "address": "" },
                 "referrer_fee_bps": 0,
                 "settlement_methods": [0],
                 "settlement_params": {
-                    "max_price_slippage_bps": 100,
+                    "max_price_slippage_bps": 0,
                     "max_outgoing_messages": 4,
                     "gasless_settlement": 1,
-                    "flexible_referrer_fee": false
+                    "flexible_referrer_fee": true
                 }
             })
         };

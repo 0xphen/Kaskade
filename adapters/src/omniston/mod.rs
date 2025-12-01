@@ -1,3 +1,5 @@
+pub mod models;
+pub mod parser;
 pub mod provider;
 pub mod types;
 pub mod ws;
