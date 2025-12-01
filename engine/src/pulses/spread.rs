@@ -70,3 +70,143 @@ impl PulseEngine for SpreadEngine {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::normalized_quote::NormalizedQuote;
+    use corelib::models::QuoteSide;
+
+    fn q(ts: u64, price: f64, side: QuoteSide) -> NormalizedQuote {
+        NormalizedQuote {
+            ts_ms: ts,
+            price,
+            amount_in: 1.0,
+            amount_out: price,
+            side,
+        }
+    }
+
+    fn make_engine(window_ms: u64, threshold_bps: f64) -> SpreadEngine {
+        SpreadEngine::new(SpreadConfig {
+            window_ms,
+            spread_threshold_bps: threshold_bps,
+        })
+    }
+
+    // ---------------------------------------------------------
+    // 1. Basic pulse detection when spread < threshold
+    // ---------------------------------------------------------
+    #[test]
+    fn test_pulse_triggers_when_spread_below_threshold() {
+        let mut engine = make_engine(1000, 5.0); // 5 bps threshold
+
+        // Bid quote → cheaper
+        let bid = q(1, 100.0, QuoteSide::Bid);
+
+        // Ask quote → slightly more expensive
+        let ask = q(2, 100.03, QuoteSide::Ask);
+
+        engine.on_quote(bid);
+        let signal = engine.on_quote(ask).expect("Expected pulse");
+
+        if let PulseDetails::Spread { spread_bps, .. } = signal.details {
+            assert!(spread_bps < 5.0); // 3 bps
+        } else {
+            panic!("Incorrect pulse type");
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 2. No pulse when spread ABOVE threshold
+    // ---------------------------------------------------------
+    #[test]
+    fn test_no_pulse_when_spread_above_threshold() {
+        let mut engine = make_engine(1000, 2.0); // 2 bps threshold
+
+        let bid = q(1, 100.0, QuoteSide::Bid);
+        let ask = q(2, 100.10, QuoteSide::Ask); // 10 bps → too big
+
+        engine.on_quote(bid);
+        let signal = engine.on_quote(ask);
+
+        assert!(signal.is_none(), "Spread too high → must not pulse");
+    }
+
+    // ---------------------------------------------------------
+    // 3. No pulse when timestamps differ too much
+    // ---------------------------------------------------------
+    #[test]
+    fn test_reject_stale_quotes() {
+        let mut engine = make_engine(1000, 10.0);
+
+        let bid = q(1, 100.0, QuoteSide::Bid);
+        let ask = q(3000, 100.02, QuoteSide::Ask); // 2000ms difference → stale
+
+        engine.on_quote(bid);
+        let result = engine.on_quote(ask);
+
+        assert!(result.is_none(), "Stale quotes must not trigger pulse");
+    }
+
+    // ---------------------------------------------------------
+    // 4. Pulse only after both bid and ask exist
+    // ---------------------------------------------------------
+    #[test]
+    fn test_waits_for_both_sides() {
+        let mut engine = make_engine(1000, 5.0);
+
+        let bid = q(1, 100.0, QuoteSide::Bid);
+        let ask = q(2, 100.04, QuoteSide::Ask);
+
+        // Only bid inserted
+        let early = engine.on_quote(bid);
+        assert!(early.is_none(), "Cannot pulse without ask");
+
+        // Now ask comes
+        let final_signal = engine.on_quote(ask);
+        assert!(
+            final_signal.is_some(),
+            "Pulse should trigger once ask arrives"
+        );
+    }
+
+    // ---------------------------------------------------------
+    // 5. Zero or invalid ask price → skip
+    // ---------------------------------------------------------
+    #[test]
+    fn test_ignores_zero_price() {
+        let mut engine = make_engine(1000, 5.0);
+
+        engine.on_quote(q(1, 100.0, QuoteSide::Bid));
+        let result = engine.on_quote(q(2, 0.0, QuoteSide::Ask));
+
+        assert!(result.is_none(), "Zero price ask must be ignored");
+    }
+
+    // ---------------------------------------------------------
+    // 6. Exact threshold should NOT fire (strict <)
+    // ---------------------------------------------------------
+    #[test]
+    fn test_no_pulse_when_spread_at_threshold_with_tolerance() {
+        let mut engine = make_engine(1000, 5.0);
+        let bid = q(1, 100.0, QuoteSide::Bid);
+        let ask = q(2, 100.05, QuoteSide::Ask);
+
+        engine.on_quote(bid);
+        let signal = engine.on_quote(ask);
+
+        if let Some(sig) = signal {
+            let spread_bps = match sig.details {
+                PulseDetails::Spread { spread_bps, .. } => spread_bps,
+                _ => panic!("wrong pulse type"),
+            };
+            assert!(
+                (spread_bps - 5.0).abs() < 0.01,
+                "Spread should be approximately 5bps"
+            );
+        } else {
+            panic!("Expected pulse based on approximate threshold");
+        }
+    }
+}

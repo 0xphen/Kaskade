@@ -1,8 +1,8 @@
 // use adapters::omniston::{
 //     api::{OmnistonApi, RfqAmount, RfqRequest},
-//     models::OmnistonEvent,
 //     ws_client::OmnistonWsClient,
 // };
+// use corelib::omniston_models::OmnistonEvent;
 // use tokio::sync::mpsc;
 
 // #[tokio::test]
@@ -23,5 +23,17 @@
 
 //     while let Some(ev) = rx.recv().await {
 //         println!("EVENT: {ev:?}");
+//     }
+// }
+
+// pub async fn run_pulse_engine<E: PulseEngine>(
+//     mut engine: E,
+//     mut recv: Receiver<NormalizedQuote>,
+// ) {
+//     while let Some(quote) = recv.recv().await {
+//         if let Some(signal) = engine.on_quote(quote).await {
+//             println!("⚡ Pulse triggered: {:?}", signal);
+//             // send to swap executor...
+//         }
 //     }
 // }

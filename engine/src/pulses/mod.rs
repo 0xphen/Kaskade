@@ -10,6 +10,7 @@ pub struct SpreadConfig {
     pub spread_threshold_bps: f64, // pulse trigger threshold
 }
 
+#[derive(Debug, Clone)]
 pub struct PulseSignal {
     pub pulse_type: PulseType,
     pub details: PulseDetails,

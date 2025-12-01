@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime};
 
 #[derive(Debug)]
 pub struct RollingWindow<T> {
@@ -7,7 +6,7 @@ pub struct RollingWindow<T> {
     max_age_ms: u64,
 }
 
-impl<T: Clone> RollingWindow<T> {
+impl<T> RollingWindow<T> {
     pub fn new(max_age_ms: u64) -> Self {
         Self {
             window: VecDeque::new(),
