@@ -44,9 +44,10 @@
 //! and minimal quote deserialization, are covered by the accompanying test
 //! suite (`#[cfg(test)]` below).
 //!
-//! Usage:
+//! ```ignore
+//! use crate::omniston::models::OmnistonEvent;
 //!
-//! ```rust
+//! // `raw_ws_message` is a JSON string from the WebSocket
 //! if let Some(event) = parse_omniston_event(raw_ws_message)? {
 //!     match event {
 //!         OmnistonEvent::Ack { rfq_id } => { /* ... */ }
@@ -54,11 +55,10 @@
 //!         OmnistonEvent::NoQuote => { /* retry or ignore */ }
 //!         OmnistonEvent::KeepAlive => { /* maintain connection */ }
 //!         OmnistonEvent::Unknown(v) => { /* log + ignore */ }
-//!         _ => {}
 //!     }
 //! }
 //! ```
-//!
+
 //! This parser is the core building block for any higher-level logic that needs
 //! reliable, typed real-time access to Omniston quotes.
 
