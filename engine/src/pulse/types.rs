@@ -1,12 +1,8 @@
-#[derive(Debug, Clone)]
+#[derive(Eq, Hash, PartialEq, Debug, Clone)]
 pub enum PulseType {
     Spread,
     Slippage,
     Trend,
-    Volatility,
-    Depth,
-    Imbalance,
-    TimeDecay,
 }
 
 #[derive(Debug, Clone)]

@@ -19,6 +19,10 @@ impl SpreadEngine {
 }
 
 impl PulseEngine for SpreadEngine {
+    fn kind(&self) -> PulseType {
+        PulseType::Spread
+    }
+
     /// Process a new normalized quote and check whether a spread pulse fires.
     ///
     /// Returns:

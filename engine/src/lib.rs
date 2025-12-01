@@ -1,3 +1,3 @@
 pub mod normalized_quote;
-pub mod pulses;
+pub mod pulse;
 pub mod rolling_window;

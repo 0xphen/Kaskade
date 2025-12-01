@@ -20,16 +20,13 @@
 //!
 //! The client is intentionally minimal: it does not perform retries, rate limit
 //! RFQ sends, or manage multiple RFQs — that is the responsibility of higher-level
-//! orchestration layers (`OmnistonApi`, `SpreadEngine`, etc.).
+//! orchestration layers (`OmnistonApi`, `PulseEngine`, etc.).
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
 use std::time::Duration;
 use tokio::sync::mpsc::Sender;
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{self, Message},
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message};
 
 use crate::omniston::{
     api::{OmnistonApi, RfqAmount, RfqRequest},
