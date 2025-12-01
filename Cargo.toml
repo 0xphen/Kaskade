@@ -2,13 +2,15 @@
 edition = "2024"
 
 [workspace]
-members = ["adapters"]
+members = ["adapters", "core", "engine"]
 
 resolver = "2"
 
 [workspace.dependencies]
 # Workspace
 adapters = { path = "adapters" }
+core = { path = "core" }
+engine = { path = "engine" }
 
 # External
 async-trait = "0.1.89"
@@ -19,3 +21,4 @@ anyhow = "1"
 tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
 serde_json = "1"
 futures = "0.3"
+chrono = "0.4.42"

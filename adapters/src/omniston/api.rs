@@ -1,6 +1,5 @@
-// src/omniston/api.rs
-use crate::omniston::models::OmnistonEvent;
 use async_trait::async_trait;
+use corelib::omniston_models::OmnistonEvent;
 use tokio::sync::mpsc::Sender;
 
 #[derive(Debug, Clone)]

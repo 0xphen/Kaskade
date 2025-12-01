@@ -21,12 +21,6 @@
 //! The client is intentionally minimal: it does not perform retries, rate limit
 //! RFQ sends, or manage multiple RFQs — that is the responsibility of higher-level
 //! orchestration layers (`OmnistonApi`, `SpreadEngine`, etc.).
-
-use crate::omniston::{
-    api::{OmnistonApi, RfqAmount, RfqRequest},
-    models::OmnistonEvent,
-    parser::parse_omniston_event,
-};
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use serde_json::json;
@@ -36,6 +30,12 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::{self, Message},
 };
+
+use crate::omniston::{
+    api::{OmnistonApi, RfqAmount, RfqRequest},
+    parser::parse_omniston_event,
+};
+use corelib::omniston_models::OmnistonEvent;
 
 /// WebSocket implementation of the Omniston API.
 pub struct OmnistonWsClient {
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn parsed_events_are_forwarded_to_channel() {
-        use crate::omniston::models::OmnistonEvent;
+        use corelib::omniston_models::OmnistonEvent;
 
         let (mut mock_sink, mut mock_stream) = mock_ws();
         let (sender, mut receiver) = tokio::sync::mpsc::channel(8);

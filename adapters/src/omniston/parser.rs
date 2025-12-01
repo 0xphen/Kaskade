@@ -62,7 +62,7 @@
 //! This parser is the core building block for any higher-level logic that needs
 //! reliable, typed real-time access to Omniston quotes.
 
-use crate::omniston::models::*;
+use corelib::omniston_models::*;
 use serde::Deserialize;
 use serde_json::Value;
 
