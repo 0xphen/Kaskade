@@ -2,7 +2,7 @@
 edition = "2024"
 
 [workspace]
-members = ["adapters", "core", "engine"]
+members = ["adapters", "cli", "core", "engine"]
 
 resolver = "2"
 
@@ -22,3 +22,4 @@ tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
 serde_json = "1"
 futures = "0.3"
 chrono = "0.4.42"
+clap = { version = "4.5.53", features = ["derive"] }

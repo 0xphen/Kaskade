@@ -1,11 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{PulseEngine, PulseSignal, PulseType};
 use crate::normalized_quote::NormalizedQuote;
+use crate::pulse::types::PulseType;
+use crate::pulse::{PulseEngine, PulseSignal};
 
 /// A PulseHandler is a thread-safe callback that receives a reference to a PulseSignal.
 pub type PulseHandler = Arc<dyn Fn(&PulseSignal) + Send + Sync + 'static>;
+
+pub type PanicHook = Arc<dyn Fn(PulseType, &PulseSignal) + Send + Sync + 'static>;
 
 #[derive(Default)]
 pub struct PulseRegistry {
@@ -14,7 +17,7 @@ pub struct PulseRegistry {
     /// One or more handlers per pulse type.
     handlers: HashMap<PulseType, Vec<PulseHandler>>,
     /// Optional callback invoked when a handler panics.
-    on_handler_panic: Option<Arc<dyn Fn(PulseType, &PulseSignal) + Send + Sync + 'static>>,
+    on_handler_panic: Option<PanicHook>,
 }
 
 impl PulseRegistry {

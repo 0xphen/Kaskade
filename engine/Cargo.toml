@@ -8,3 +8,4 @@ corelib = { path = "../core" }
 chrono = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
+clap = { workspace = true }

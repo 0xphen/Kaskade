@@ -1,5 +1,3 @@
-pub mod dispatcher;
-pub mod registry;
 pub mod spread;
 pub mod types;
 
