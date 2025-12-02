@@ -1,5 +1,6 @@
 use serde::Deserialize;
 
+use super::QuoteSide;
 /// TON Jetton or native asset address used by Omniston.
 #[derive(Debug, Clone, Deserialize)]
 pub struct AssetAddress {
@@ -74,6 +75,9 @@ pub struct Quote {
     pub estimated_gas_consumption: String,
 
     pub params: QuoteParams,
+
+    #[serde(default)]
+    pub side: QuoteSide,
 }
 
 #[derive(Debug, Clone, Deserialize)]

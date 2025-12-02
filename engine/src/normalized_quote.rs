@@ -61,20 +61,19 @@ impl NormalizedQuote {
     ///
     /// # Arguments
     /// - `ev`: Raw Omniston quote
-    /// - `side`: Whether this was a bid-side or ask-side RFQ
     ///
     /// # Returns
     /// A fully normalized `NormalizedQuote` with price and amounts resolved.
     ///
     /// # Panics
     /// Never panics. Invalid numeric strings are treated as 0.0.
-    pub fn from_event(ev: &Quote, side: QuoteSide) -> Self {
+    pub fn from_event(ev: &Quote) -> Self {
         let now = chrono::Utc::now().timestamp_millis() as u64;
 
         let bid = ev.bid_units.parse::<f64>().unwrap_or(0.0);
         let ask = ev.ask_units.parse::<f64>().unwrap_or(0.0);
 
-        let (amount_in, amount_out, price) = match side {
+        let (amount_in, amount_out, price) = match ev.side {
             QuoteSide::Bid => {
                 // Selling bid_asset → receiving ask_asset
                 let amount_in = bid;
@@ -105,7 +104,7 @@ impl NormalizedQuote {
             price,
             amount_in,
             amount_out,
-            side,
+            side: ev.side.clone(),
         }
     }
 }
@@ -113,6 +112,7 @@ impl NormalizedQuote {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use corelib::models::QuoteSide;
     use corelib::omniston_models::{AssetAddress, Quote, QuoteParams};
 
     fn dummy_addr() -> AssetAddress {
@@ -122,7 +122,7 @@ mod tests {
         }
     }
 
-    fn make_quote(bid: &str, ask: &str) -> Quote {
+    fn make_quote(bid: &str, ask: &str, side: QuoteSide) -> Quote {
         Quote {
             quote_id: "q1".into(),
             resolver_id: "r1".into(),
@@ -144,14 +144,19 @@ mod tests {
             trade_start_deadline: 0,
             gas_budget: "0".into(),
             estimated_gas_consumption: "0".into(),
+
             params: QuoteParams { swap: None },
+
+            side, // <-- REQUIRED
         }
     }
 
     #[test]
     fn test_bid_side_normalization() {
-        let q = make_quote("100", "50"); // Sell 100 → receive 50
-        let nq = NormalizedQuote::from_event(&q, QuoteSide::Bid);
+        // Bid side → amount_in = bid_units
+        let q = make_quote("100", "50", QuoteSide::Bid);
+
+        let nq = NormalizedQuote::from_event(&q);
 
         assert_eq!(nq.amount_in, 100.0);
         assert_eq!(nq.amount_out, 50.0);
@@ -160,21 +165,25 @@ mod tests {
 
     #[test]
     fn test_ask_side_normalization() {
-        let q = make_quote("50", "100"); // Buy 100 ← pay 50
-        let nq = NormalizedQuote::from_event(&q, QuoteSide::Ask);
+        // Ask side → amount_in = ask_units
+        let q = make_quote("50", "100", QuoteSide::Ask);
 
-        assert_eq!(nq.amount_in, 100.0); // ask_units
-        assert_eq!(nq.amount_out, 50.0); // bid_units
+        let nq = NormalizedQuote::from_event(&q);
+
+        assert_eq!(nq.amount_in, 100.0); // ask_units = what user is giving
+        assert_eq!(nq.amount_out, 50.0); // bid_units = what user receives
         assert_eq!(nq.price, 0.5);
     }
 
     #[test]
     fn test_zero_behavior() {
-        let q = make_quote("0", "100");
-        let nq = NormalizedQuote::from_event(&q, QuoteSide::Bid);
+        // Zero units (still Ask or Bid side is explicit)
+        let q = make_quote("0", "100", QuoteSide::Ask);
 
+        let nq = NormalizedQuote::from_event(&q);
+
+        assert_eq!(nq.amount_in, 100.0); // ask side → use ask_units
+        assert_eq!(nq.amount_out, 0.0);
         assert_eq!(nq.price, 0.0);
-        assert_eq!(nq.amount_in, 0.0);
-        assert_eq!(nq.amount_out, 100.0);
     }
 }

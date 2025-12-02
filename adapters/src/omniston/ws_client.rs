@@ -137,7 +137,7 @@ impl OmnistonApi for OmnistonWsClient {
 
                         let raw = msg.to_text()?;
 
-                        if let Some(ev) = parse_omniston_event(raw)? {
+                        if let Some(ev) = parse_omniston_event(raw, &req.side)? {
                             let _ = sender.send(ev).await;
                         }
                     }
@@ -168,6 +168,7 @@ mod tests {
             bid_asset: "EQBID".into(),
             ask_asset: "EQASK".into(),
             amount: RfqAmount::BidUnits("1000".into()),
+            side: corelib::models::QuoteSide::Bid,
         };
 
         let p = OmnistonWsClient::build_params(&req);
@@ -181,6 +182,7 @@ mod tests {
             bid_asset: "EQBID".into(),
             ask_asset: "EQASK".into(),
             amount: RfqAmount::BidUnits("500".into()),
+            side: corelib::models::QuoteSide::Bid,
         };
 
         let (mut sink, mut stream) = mock_ws();
@@ -207,7 +209,7 @@ mod tests {
 
     #[tokio::test]
     async fn parsed_events_are_forwarded_to_channel() {
-        use corelib::omniston_models::OmnistonEvent;
+        use corelib::{QuoteSide, omniston_models::OmnistonEvent};
 
         let (mut mock_sink, mut mock_stream) = mock_ws();
         let (sender, mut receiver) = tokio::sync::mpsc::channel(8);
@@ -261,7 +263,7 @@ mod tests {
 
         let raw = mock_stream.next().await.unwrap().into_text().unwrap();
 
-        if let Some(ev) = parse_omniston_event(&raw).unwrap() {
+        if let Some(ev) = parse_omniston_event(&raw, &QuoteSide::Ask).unwrap() {
             sender.send(ev).await.unwrap();
         }
 

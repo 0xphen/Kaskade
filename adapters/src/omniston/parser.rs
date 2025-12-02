@@ -86,7 +86,10 @@ struct RpcEventResult {
     event: Value,
 }
 
-pub fn parse_omniston_event(raw: &str) -> anyhow::Result<Option<OmnistonEvent>> {
+pub fn parse_omniston_event(
+    raw: &str,
+    side: &corelib::models::QuoteSide,
+) -> anyhow::Result<Option<OmnistonEvent>> {
     let json: Value = serde_json::from_str(raw)?;
 
     if json.get("method").is_none() && json.get("params").is_none() {
@@ -120,13 +123,12 @@ pub fn parse_omniston_event(raw: &str) -> anyhow::Result<Option<OmnistonEvent>> 
         return Ok(Some(OmnistonEvent::KeepAlive));
     }
 
-    // QUOTE_UPDATED
     if let Some(q) = event.get("quote_updated") {
-        let ev: QuoteUpdatedEvent =
-            serde_json::from_value(serde_json::json!({ "quote_updated": q }))?;
-        return Ok(Some(OmnistonEvent::QuoteUpdated(Box::new(
-            ev.quote_updated,
-        ))));
+        let mut quote: Quote = serde_json::from_value(q.clone())?;
+        // Inject the side into the Quote
+        quote.side = side.clone();
+
+        return Ok(Some(OmnistonEvent::QuoteUpdated(Box::new(quote))));
     }
 
     // UNSUBSCRIBED (rare)
@@ -144,13 +146,14 @@ pub fn parse_omniston_event(raw: &str) -> anyhow::Result<Option<OmnistonEvent>> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use corelib::models::QuoteSide;
     use serde_json::json;
 
     #[test]
     fn ignore_subscription_result() {
         let raw = r#"{ "jsonrpc":"2.0", "result":324018, "id":"1" }"#;
 
-        let parsed = parse_omniston_event(raw).unwrap();
+        let parsed = parse_omniston_event(raw, &QuoteSide::Ask).unwrap();
         assert!(parsed.is_none(), "Subscription result must be ignored");
     }
 
@@ -174,7 +177,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Bid)
+            .unwrap()
+            .unwrap();
         match ev {
             OmnistonEvent::Ack { rfq_id } => assert_eq!(rfq_id, "ABC123"),
             _ => panic!("Expected Ack event"),
@@ -201,7 +206,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
+            .unwrap()
+            .unwrap();
         assert!(matches!(ev, OmnistonEvent::NoQuote));
     }
 
@@ -225,7 +232,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
+            .unwrap()
+            .unwrap();
         assert!(matches!(ev, OmnistonEvent::KeepAlive));
     }
 
@@ -277,7 +286,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Bid)
+            .unwrap()
+            .unwrap();
 
         match ev {
             OmnistonEvent::QuoteUpdated(q) => {
@@ -313,7 +324,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
+            .unwrap()
+            .unwrap();
 
         match ev {
             OmnistonEvent::Unsubscribed { rfq_id } => {
@@ -347,7 +360,9 @@ mod tests {
         })
         .to_string();
 
-        let ev = parse_omniston_event(&raw).unwrap().unwrap();
+        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
+            .unwrap()
+            .unwrap();
 
         match ev {
             OmnistonEvent::Unknown(v) => {
@@ -366,7 +381,7 @@ mod tests {
     fn parse_invalid_json() {
         let raw = "{ this is not valid JSON ";
 
-        let err = parse_omniston_event(raw);
+        let err = parse_omniston_event(raw, &QuoteSide::Ask);
         assert!(err.is_err(), "Invalid JSON must return an error");
     }
 
@@ -380,7 +395,74 @@ mod tests {
     fn parse_missing_params() {
         let raw = r#"{ "jsonrpc":"2.0", "method":"event" }"#;
 
-        let out = parse_omniston_event(raw).unwrap();
+        let out = parse_omniston_event(raw, &QuoteSide::Bid).unwrap();
         assert!(out.is_none(), "Missing params must produce None");
+    }
+
+    //
+    // ---------------------------------------------------------------------------
+    // 10. Side injection correctness
+    // ---------------------------------------------------------------------------
+    // JSON does NOT contain "side", but requester knows the RFQ direction.
+    // parse_omniston_event must correctly inject the provided side (Ask / Bid).
+    //
+    #[test]
+    fn parse_quote_updated_injects_side_correctly() {
+        let raw = serde_json::json!({
+            "jsonrpc":"2.0",
+            "method":"event",
+            "params":{
+                "subscription":99,
+                "result":{
+                    "event":{
+                        "quote_updated":{
+                            "quote_id":"SIDE_TEST",
+                            "resolver_id":"RIDTEST",
+                            "resolver_name":"Omniston",
+                            "bid_asset_address": { "blockchain":607, "address":"EQBID" },
+                            "ask_asset_address": { "blockchain":607, "address":"EQASK" },
+                            "bid_units":"1234",
+                            "ask_units":"5678",
+                            "referrer_address": null,
+                            "referrer_fee_asset": { "blockchain":607, "address":"EQFEE" },
+                            "referrer_fee_units":"0",
+                            "protocol_fee_asset": { "blockchain":607, "address":"EQPROT" },
+                            "protocol_fee_units":"0",
+                            "quote_timestamp":111,
+                            "trade_start_deadline":222,
+                            "gas_budget":"300",
+                            "estimated_gas_consumption":"50",
+                            "params":{ "swap": null }
+                        }
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        // Inject "Ask" explicitly
+        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
+            .unwrap()
+            .unwrap();
+
+        match ev {
+            OmnistonEvent::QuoteUpdated(q) => {
+                assert_eq!(q.quote_id, "SIDE_TEST");
+                assert_eq!(q.side, QuoteSide::Ask, "Side must be injected correctly");
+            }
+            _ => panic!("Expected QuoteUpdated event"),
+        }
+
+        // Also check that injection flips correctly for Bid
+        let ev2 = parse_omniston_event(&raw, &QuoteSide::Bid)
+            .unwrap()
+            .unwrap();
+
+        match ev2 {
+            OmnistonEvent::QuoteUpdated(q2) => {
+                assert_eq!(q2.side, QuoteSide::Bid);
+            }
+            _ => panic!("Expected QuoteUpdated event"),
+        }
     }
 }

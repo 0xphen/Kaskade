@@ -13,6 +13,7 @@ pub struct RfqRequest {
     pub bid_asset: String,
     pub ask_asset: String,
     pub amount: RfqAmount,
+    pub side: corelib::models::QuoteSide,
 }
 
 /// High-level abstraction for Omniston RFQ streaming.
