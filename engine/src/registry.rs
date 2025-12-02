@@ -45,7 +45,7 @@ impl PulseRegistry {
         self.handlers.entry(pulse_type).or_default().push(handler);
     }
 
-    /// Convenience: check if an engine for a pulse type exists.
+    /// Check if an engine for a pulse type exists.
     pub fn has_engine(&self, pulse_type: PulseType) -> bool {
         self.engines.contains_key(&pulse_type)
     }
