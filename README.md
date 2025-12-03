@@ -49,6 +49,18 @@ A *pulse* is a market micro-signal signaling:
 | Backtesting Engine                                            | ☐            |
 | Strategy Studio & Web Dashboard                               | ☐            |
 
+# Pulse Types
+
+| Pulse Type     | Purpose                                                                         |
+| -------------- | ------------------------------------------------------------------------------- |
+| **Spread**     | Executes when the bid–ask spread becomes tight, giving the user a better price. |
+| **Slippage**   | Executes when the simulated output improves, ensuring higher return per swap.   |
+| **Trend**      | Follows short-term micro-momentum to avoid poor entries during local downturns. |
+| **Time-Decay** | Safety fallback that ensures progress even if ideal conditions never appear.    |
+| **Imbalance**  | Reacts to directional liquidity pressure across buy/sell routes.                |
+| **Depth**      | Prioritizes swaps when liquidity depth increases, reducing price impact.        |
+| **Volatility** | Avoids chaotic market periods where execution cost is unpredictable.            |
+
 # **High-Level Architecture**
 
 Kaskade consists of 4 coordinated subsystems:
@@ -186,7 +198,7 @@ All logic is **non-custodial** and **verifiable on-chain**.
 
 ## 🗺️ Roadmap
 
-### **Phase 1 — MVP (Complete)**  
+### **Phase 1 - Market-Condition Execution Engine**  
 ✔ RFQ stream  
 ✔ Spread / Slippage / Trend pulses  
 ✔ Scheduler  
