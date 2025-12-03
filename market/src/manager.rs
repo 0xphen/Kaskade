@@ -123,7 +123,6 @@ impl<C: OmnistonApi> MarketManager<C> {
     ) {
         while let Some(raw_event) = event_rx.recv().await {
             if let OmnistonEvent::QuoteUpdated(quote) = raw_event {
-                println!("QUOTE: {:?}", quote);
                 let nq = NormalizedQuote::from_event(&quote);
 
                 let mut rolling_window_guard = self.rolling_window.lock().await;

@@ -89,7 +89,7 @@ struct RpcEventResult {
 
 pub fn parse_omniston_event(
     raw: &str,
-    side: &crate::types::QuoteSide,
+    _side: &crate::types::QuoteSide,
 ) -> anyhow::Result<Option<OmnistonEvent>> {
     let json: Value = serde_json::from_str(raw)?;
 

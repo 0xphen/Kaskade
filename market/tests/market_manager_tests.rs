@@ -5,7 +5,7 @@ use market::{
     manager::MarketManager,
     omniston::OmnistonApi,
     types::{
-        AssetAddress, MarketMetrics, OmnistonEvent, Pair, Quote, QuoteParams, RfqAmount,
+        AssetAddress, OmnistonEvent, Pair, Quote, QuoteParams, RfqAmount,
         RfqRequest, SubscriptionRequest,
     },
 };
