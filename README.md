@@ -1,14 +1,10 @@
-# ⚡ Kaskade — Conditional Micro-Swap Execution Engine for TON
+# ⚡ Kaskade — Conditional Micro-Swap Execution Engine for TON DeFi
 
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/placeholder" alt="STONIC Pulse Diagram" width="350" height="350"/>
-</div>
+**Kaskade** is a **Rust-powered, non-custodial smart execution engine** for the **TON Blockchain**, built directly on top of the **STON.fi DEX API**, **Omniston RFQ WebSocket**, and **Omniston gRPC trade builder**.
 
-**STONIC PULSE** is a **Rust-powered, non-custodial smart execution engine** for the **TON Blockchain**, built directly on top of the **STON.fi DEX API**, **Omniston RFQ WebSocket**, and **Omniston gRPC trade builder**.
+It introduces the first **pulse-based execution primitive** on TON — allowing users to split large swaps into **multiple micro-swaps executed only when market conditions are favorable**, achieving better pricing, lower slippage, and more efficient routing. It helps users reduce slippage, improve entry timing, and avoid poor execution prices, especially during volatile periods.
 
-It introduces the first **pulse-based execution primitive** on TON — allowing users to split large swaps into **multiple micro-swaps executed only when market conditions are favorable**, achieving better pricing, lower slippage, and more efficient routing.
-
-STONIC PULSE works as an event-driven alternative to basic “Swap Now” and naive DCA. It continuously listens to live market data and executes trades **only on good pulses**: tight spreads, improving slippage, and favorable micro-trends.
+The system analyzes spread, micro-trend, volatility, and slippage signals and splits a user’s swap into small “pulses,” executing them only when conditions are optimal.
 
 ---
 
@@ -30,14 +26,14 @@ Short-term dips → they buy at local bottoms
 
 ### 🔹 **3. PULSE introduces *dynamic, market-condition execution***
 
-Instead of time-based trades, STONIC PULSE executes **event-based** swaps triggered by:
+Instead of time-based trades, Kaskade executes **event-based** swaps triggered by:
 
 * lower spread
 * lower slippage
 * improving micro-trend (avoid buying into dumps)
-* (future) rising liquidity depth
-* (future) lower volatility
-* (future) imbalance signals across RFQ sources
+* Rising liquidity depth
+* Lower volatility
+* Imbalance signals across RFQ sources
 
 **The TON ecosystem has nothing like this today.**
 STONIC PULSE creates a new foundational DeFi primitive.
