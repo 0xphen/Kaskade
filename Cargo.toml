@@ -2,7 +2,7 @@
 edition = "2024"
 
 [workspace]
-members = ["core", "market", "session"]
+members = ["core", "market", "scheduler", "session"]
 
 resolver = "2"
 
