@@ -1,272 +1,209 @@
-# ⚡ Kaskade — Conditional Micro-Swap Execution Engine for TON DeFi
+# ⚡ **Kaskade — Conditional Micro-Swap Execution Engine for TON DeFi**
 
-**Kaskade** is a **Rust-powered, non-custodial smart execution engine** for the **TON Blockchain**, built directly on top of the **STON.fi DEX API**, **Omniston RFQ WebSocket**, and **Omniston gRPC trade builder**.
+**Kaskade** is a **Rust-based, non-custodial execution engine** for the **TON Blockchain** that performs **condition-based micro-swaps**.
 
-It introduces the first **pulse-based execution primitive** on TON — allowing users to split large swaps into **multiple micro-swaps executed only when market conditions are favorable**, achieving better pricing, lower slippage, and more efficient routing. It helps users reduce slippage, improve entry timing, and avoid poor execution prices, especially during volatile periods.
+It introduces the first **pulse-driven execution primitive** on TON — enabling users to split a swap into multiple micro-swaps that execute **only when market conditions are optimal**.
 
-The system analyzes spread, micro-trend, volatility, and slippage signals and splits a user’s swap into small “pulses,” executing them only when conditions are optimal.
+Kaskade is built on the core primitives of the STON.fi and Omniston stack — RFQ quotes, route simulation, and gRPC trade building — transforming them into a powerful Rust-based automation engine for TON DeFi.
 
----
+# **Why Kaskade?**
 
-# ⭐ **Why STONIC PULSE Matters**
+TON DeFi users often execute swaps during highly unfavourable market conditions:
 
-STONIC PULSE solves real problems for TON DeFi traders:
+* Spread widens → bad price
+* Slippage spikes → poor return
+* Local downtrend → buying the top
+* Depth thins → higher execution cost
 
-### 🔹 **1. Users typically execute swaps at bad moments**
+Most current tools (bots, wallets, DCA) are **time-based**, not **market-condition-based**.
 
-Spread widens → they overpay
-Slippage spikes → they receive less
-Short-term dips → they buy at local bottoms
+**Kaskade is the first TON engine that executes trades automatically when the market says “now is the optimal moment.”**
 
-### 🔹 **2. Existing tools are static**
 
-* “Swap Now” ignores real-time market structure
-* DCA executes at fixed intervals, not based on conditions
-* Telegram trading bots do not use RFQ depth or micro-trend signals
+# **Pulse-Based Execution (Market Condition Detection)**
 
-### 🔹 **3. PULSE introduces *dynamic, market-condition execution***
+Kaskade continuously consumes Omniston RFQ quotes and STON.fi simulations to determine if **a pulse** has occurred — meaning execution is favorable.
 
-Instead of time-based trades, Kaskade executes **event-based** swaps triggered by:
+A *pulse* is a market micro-signal signaling:
 
-* lower spread
-* lower slippage
-* improving micro-trend (avoid buying into dumps)
-* Rising liquidity depth
-* Lower volatility
-* Imbalance signals across RFQ sources
+> “This is a good moment to execute a micro-swap.”
 
-**The TON ecosystem has nothing like this today.**
-STONIC PULSE creates a new foundational DeFi primitive.
+# 🧩 **Feature Overview**
 
----
+| Feature                                                       | Status       |
+| ------------------------------------------------------------- | ------------ |
+| Omniston RFQ WebSocket Integration                            | ✔            |
+| STON.fi Swap Simulation API                                   | ✔            |
+| Omniston gRPC `buildTransfer`                                 | ✔            |
+| Spread Pulse                                                  | ✔            |
+| Slippage Pulse                                                | ✔            |
+| Micro-Trend Pulse                                             | ✔            |
+| Scheduler (eligibility + RR selection)                        | ✔            |
+| Execution Engine & Worker Pool                                | ✔            |
+| Session Manager (user strategies)                             | ✔            |
+| Telegram Bot Command Flow                                     | ☐            |
+| Execution Manager Contract (EMC) for non-custodial automation | ⚙️ In Design |
+| Depth Pulse                                                   | ☐            |
+| Volatility Pulse                                              | ☐            |
+| RFQ Imbalance Pulse                                           | ☐            |
+| Backtesting Engine                                            | ☐            |
+| Strategy Studio & Web Dashboard                               | ☐            |
 
-# 🧠 **Core Concept: Market “Pulses”**
+# **High-Level Architecture**
 
-A **pulse** is a micro-signal that indicates *now is a good moment to execute a trade*.
+Kaskade consists of 4 coordinated subsystems:
 
-STONIC PULSE listens to the Omniston RFQ stream and detects pulses in real-time.
+### **1. `market/`**
 
-## 🔵 Supported in Full Version (7 Pulses)
+Streams and processes TON market data.
 
-| Pulse                 | Description                                                    |
-| --------------------- | -------------------------------------------------------------- |
-| **Spread Pulse**      | Execute when spread is tight (best pricing).                   |
-| **Slippage Pulse**    | Execute when estimated slippage is low using `/swap/simulate`. |
-| **Micro-Trend Pulse** | Execute when short-term price movement improves.               |
-| **Volatility Pulse**  | Avoid turbulent micro-moments.                                 |
-| **Depth Pulse**       | Execute when liquidity depth increases.                        |
-| **Imbalance Pulse**   | Execute when RFQ flows favor your direction.                   |
-| **Time-Decay Pulse**  | Safety fallback—execute if conditions never appear.            |
+* Connects to **Omniston RFQ WebSocket**
+* Maintains rolling windows for trend detection
+* Computes spreads, mid-price, and volatility using Omniston RFQ data, STON.fi DEX liquidity insights, and Omniston gRPC route information.
+* Normalizes metrics for scheduler
 
----
+### **2. `scheduler/`**
 
-# 🚀 **MVP (10-Day Release)**
+Decides *when* to pull the trigger.
 
-The MVP is a **Rust CLI tool** that performs:
+* Eligibility checks (spread, slippage, trend, time-Decay, market-imbalance, depth, volatility)
+* Per-pair round-robin selection
+* Cooldowns + rate limits
+* Sends `ExecutionRequest` to executor
 
-### ✔ Live Omniston RFQ streaming
+### **3. `executor/`**
 
-### ✔ 3 Pulse primitives (Spread, Slippage, Micro-Trend)
+Turns decisions into real swaps.
 
-### ✔ Conditional micro-swap execution strategy
+* Reloads session state
+* Fetches latest metrics
+* Builds swaps using **Omniston gRPC `buildTransfer`**
+* Generates TonConnect/TX payload
+* Updates session state
+* Sends user notifications
 
-### ✔ Chunk planner (e.g., 200 TON → 20×10 TON swaps)
+### **4. `emc/` — Non-Custodial Execution Manager Contract**
 
-### ✔ Omniston gRPC `buildTransfer` integration
+An on-chain contract:
 
-### ✔ TonConnect-ready output for manual signing
+* Holds the user’s approved tokens
+* Stores swap parameters and constraints
+* Accepts backend-triggered micro-swap messages
+* Performs the actual Jetton transfers to **STON.fi DEX**
+* Returns output tokens to the user
+* Allows withdrawal of unused tokens anytime
 
-This is enough to showcase the full concept and win the grant.
+This contract allows **fully automated execution with zero user interaction after setup**.
 
----
+# **Architecture Diagram**
 
-# ⚙️ **How It Works**
-
-<div align="center">
-  <img src="https://github.com/user-attachments/assets/placeholder2" alt="Pulse Execution Flow" width="550"/>
-</div>
-
-### 1. **Connect to Omniston WebSocket**
-
-The engine streams `quoteUpdated` events for the chosen pair.
-
-### 2. **Compute Market Signals**
-
-Each quote is transformed into metrics:
-
-* mid-price
-* spread (bps)
-* slippage (via STON.fi API)
-* micro-trend (rolling window)
-
-### 3. **Detect a Pulse**
-
-A pulse fires when:
+This diagram reflects the **correct flow**:
 
 ```
-spread < threshold 
-AND 
-slippage < threshold 
-AND 
-trend is favorable
+                           ┌──────────────────────┐
+                           │   User (Telegram)    │
+                           │  Creates Pulse Plan  │
+                           └──────────┬───────────┘
+                                      │
+                                      ▼
+                         (1) TonConnect Deployment + Deposit
+                                      │
+                                      ▼
+                    ┌───────────────────────────────────┐
+                    │    Execution Manager Contract     │
+                    │     (holds tokens non-custodially)│
+                    └─────────────┬─────────────────────┘
+                                  │ Pulse-trigger messages
+                                  ▼
+                   ┌───────────────────────────┐
+                   │        EXECUTOR           │
+                   │  • re-check conditions    │
+                   │  • Omniston buildTransfer │
+                   │  • send FX msg to EMC     │
+                   └───────────┬───────────────┘
+                               │
+                               ▼
+                    ┌───────────────────────────┐
+                    │         SCHEDULER         │
+                    │ • Eligibility filtering   │
+                    │ • Round-robin selection   │
+                    └──────────┬────────────────┘
+                               │ metrics
+                               ▼
+                    ┌───────────────────────────┐
+                    │         MARKET            │
+                    │ • Omniston RFQ stream     │
+                    │ • STON.fi /simulate       │
+                    │ • Trend & spread calc     │
+                    └───────────────────────────┘
 ```
 
-### 4. **Trigger Execution**
+**Actual swap happens inside the EMC**, not via backend-signed transactions.
 
-Each pulse triggers one micro-swap until the user’s full amount is exhausted.
+# 🔒 **Non-Custodial Execution with EMC**
 
-### 5. **Build TON Transaction**
+The **Execution Manager Contract (EMC)** makes Kaskade *fully automatic* while staying non-custodial.
 
-Uses Omniston gRPC:
+### Setup (one-time TonConnect action)
 
-```
-buildTransfer -> TON cell messages -> TonConnect link
-```
+1. User initiates session from Telegram/CLI
+2. Kaskade backend provides TonConnect payload
+3. User signs:
 
-### 6. **User signs & broadcasts**
+   * Contract deployment (StateInit)
+   * Token deposit (Jetton transfer)
+4. EMC is deployed and funded with TON for gas
 
-(No custody. No stored keys. No trust required.)
+### Automated Execution (hands-off)
 
----
+* Kaskade reads market data
+* Scheduler triggers pulses
+* Executor sends authorized internal messages to EMC
+* EMC executes micro-swaps directly with **STON.fi DEX**
+* Output tokens are returned to the user’s wallet
 
-# 🛠️ **Quick Start (CLI Tool)**
+### Withdrawal Anytime
 
-### 1. Clone & Build
+* User sends a withdrawal message
+* EMC returns remaining Jettons + unused TON
 
-```bash
-git clone https://github.com/0xphen/stonic-pulse.git
-cd stonic-pulse
+All logic is **non-custodial** and **verifiable on-chain**.
 
-cargo build --release --bin stonic-pulse
-export PATH=$PATH:$(pwd)/target/release
-```
+## 🛠️ STON.fi & Omniston Integrations
 
-### 2. Verify Installation
+### **Omniston**
+✔ RFQ WebSocket  
+✔ Route-aware pricing  
+✔ gRPC Trade Builder (`buildTransfer`)  
+✔ Multi-hop routing  
+✔ Aggregated liquidity depth  
 
-```bash
-stonic-pulse --help
-```
+### **STON.fi**
+✔ `/v1/swap/simulate` for slippage  
+✔ `/v1/pools` for depth analysis  
+✔ `/v1/markets` for volatility inputs  
+✔ DEX contract-level swap calls (via EMC)  
 
----
+## 🗺️ Roadmap
 
-# ⚡ **Example: Smart Pulse Swap (20 TON → STON in 2 TON chunks)**
+### **Phase 1 — MVP (Complete)**  
+✔ RFQ stream  
+✔ Spread / Slippage / Trend pulses  
+✔ Scheduler  
+✔ Executor  
+✔ gRPC trade builder  
+✔ STON.fi simulation  
 
-```bash
-stonic-pulse execute \
-  --from TON \
-  --to STON \
-  --total 20 \
-  --chunk 2 \
-  --spread-threshold 0.35 \
-  --slippage-threshold 0.40 \
-  --enable-trend
-```
+### **Phase 2 — Non-Custodial Automation**  
+⚙️ Telegram UI  
+⚙️ Execution Manager Contract  
+⚙️ Backend-triggered micro-swap execution  
+⚙️ Secure session lifecycle  
+⚙️ User withdrawal  
 
-**Sample Output (illustrative):**
-
-```
-🔄 Streaming RFQ quotes...
-📈 mid=2.004 | spread=0.28% | trend=↑ | slippage=0.21%
-⚡ Pulse detected! Executing chunk 1/10 (2 TON)
-
-🧱 Building transfer via Omniston gRPC...
-✓ Transfer ready!
-TonConnect link:
-ton://transfer/...base64...
-
-📈 mid=2.003 | spread=0.17% | trend=↑ | slippage=0.15%
-⚡ Pulse detected! Executing chunk 2/10 (2 TON)
-...
-```
-
----
-
-# 🌐 **STONIC PULSE API Integrations**
-
-STONIC PULSE deeply integrates with the entire STON.fi + Omniston ecosystem:
-
-### 🔹 **Omniston WebSocket**
-
-* RFQ quote stream
-* real-time spreads & prices
-* route discovery
-
-### 🔹 **Omniston gRPC**
-
-* `requestForQuote`
-* `buildTransfer`
-* `trackTrade`
-
-### 🔹 **STON.fi REST API**
-
-* `/v1/swap/simulate` → slippage
-* `/v1/markets`, `/v1/pools`, `/v1/stats/pool` (future pulse support)
-
-STONIC PULSE is essentially a *reference implementation* for complex STON.fi integrations.
-
----
-
-# 🛣️ **Roadmap**
-
-## **Phase 1 — Pulse Engine MVP (10 days)**
-
-* CLI tool
-* 3 pulse primitives
-* micro-swap chunking
-* gRPC buildTransfer integration
-* TonConnect output
-
-✔ Grant-ready MVP
-
----
-
-## **Phase 2 — Telegram Bot + Semi-Automatic Execution**
-
-* Pulse sessions controlled through Telegram
-* User grants permission via TonConnect session
-* Semi-automatic multi-swap execution
-* Execution notifications
-* Session summaries
-* Slippage protection
-
-✔ Real users start using the system
-
----
-
-## **Phase 3 — Full Execution Platform**
-
-* All 7 pulses supported
-* Portfolio strategies (rotation, hedging)
-* Backtesting + analytics
-* Web dashboard
-* SDK for other bots to use pulse execution
-* Protocol-level integrations
-
-✔ STONIC PULSE becomes a TON trading primitive
-
----
-
-# 🤝 **Contributing**
-
-STONIC PULSE welcomes contributions from the TON community:
-
-* Open issues for bugs or feature requests
-* Send pull requests for improvements
-* Discuss architecture in the repo discussions
-
----
-
-# 📄 **License**
-
-STONIC PULSE is released under the **MIT License**.
-
----
-
-If you want, I can also generate:
-
-✅ a **CONTRIBUTING.md**
-✅ a **project diagram** (ASCII or image-ready)
-✅ a **grant proposal formatted version**
-✅ the **logo** and **banner** for STONIC PULSE
-
-Just tell me.
+### **Phase 3 — DeFi Automation Platform**  
+⬜ All pulses (depth, volatility, slippage, trend, time-Decay, imbalance)  
+⬜ Strategy builder (hedging, rotation)  
+⬜ Backtesting UI  
+⬜ Web dashboard + charts  
+⬜ Multi-DEX support  
