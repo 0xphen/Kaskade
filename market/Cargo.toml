@@ -1,7 +1,7 @@
 [package]
-name = "adapters"
+name = "market"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
 
 [dependencies]
 corelib = { path = "../core" } 
@@ -13,3 +13,4 @@ anyhow = { workspace = true }
 tokio-tungstenite = { workspace = true }
 serde_json = { workspace = true }
 futures = { workspace = true }
+chrono = { workspace = true }

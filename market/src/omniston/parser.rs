@@ -62,9 +62,10 @@
 //! This parser is the core building block for any higher-level logic that needs
 //! reliable, typed real-time access to Omniston quotes.
 
-use corelib::omniston_models::*;
 use serde::Deserialize;
 use serde_json::Value;
+
+use crate::types::{OmnistonEvent, Quote};
 
 #[derive(Debug, Deserialize)]
 struct RpcEventEnvelope {
@@ -88,7 +89,7 @@ struct RpcEventResult {
 
 pub fn parse_omniston_event(
     raw: &str,
-    side: &corelib::models::QuoteSide,
+    side: &crate::types::QuoteSide,
 ) -> anyhow::Result<Option<OmnistonEvent>> {
     let json: Value = serde_json::from_str(raw)?;
 
@@ -125,8 +126,6 @@ pub fn parse_omniston_event(
 
     if let Some(q) = event.get("quote_updated") {
         let mut quote: Quote = serde_json::from_value(q.clone())?;
-        // Inject the side into the Quote
-        quote.side = side.clone();
 
         return Ok(Some(OmnistonEvent::QuoteUpdated(Box::new(quote))));
     }
@@ -146,7 +145,7 @@ pub fn parse_omniston_event(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use corelib::models::QuoteSide;
+    use crate::types::QuoteSide;
     use serde_json::json;
 
     #[test]
@@ -397,72 +396,5 @@ mod tests {
 
         let out = parse_omniston_event(raw, &QuoteSide::Bid).unwrap();
         assert!(out.is_none(), "Missing params must produce None");
-    }
-
-    //
-    // ---------------------------------------------------------------------------
-    // 10. Side injection correctness
-    // ---------------------------------------------------------------------------
-    // JSON does NOT contain "side", but requester knows the RFQ direction.
-    // parse_omniston_event must correctly inject the provided side (Ask / Bid).
-    //
-    #[test]
-    fn parse_quote_updated_injects_side_correctly() {
-        let raw = serde_json::json!({
-            "jsonrpc":"2.0",
-            "method":"event",
-            "params":{
-                "subscription":99,
-                "result":{
-                    "event":{
-                        "quote_updated":{
-                            "quote_id":"SIDE_TEST",
-                            "resolver_id":"RIDTEST",
-                            "resolver_name":"Omniston",
-                            "bid_asset_address": { "blockchain":607, "address":"EQBID" },
-                            "ask_asset_address": { "blockchain":607, "address":"EQASK" },
-                            "bid_units":"1234",
-                            "ask_units":"5678",
-                            "referrer_address": null,
-                            "referrer_fee_asset": { "blockchain":607, "address":"EQFEE" },
-                            "referrer_fee_units":"0",
-                            "protocol_fee_asset": { "blockchain":607, "address":"EQPROT" },
-                            "protocol_fee_units":"0",
-                            "quote_timestamp":111,
-                            "trade_start_deadline":222,
-                            "gas_budget":"300",
-                            "estimated_gas_consumption":"50",
-                            "params":{ "swap": null }
-                        }
-                    }
-                }
-            }
-        })
-        .to_string();
-
-        // Inject "Ask" explicitly
-        let ev = parse_omniston_event(&raw, &QuoteSide::Ask)
-            .unwrap()
-            .unwrap();
-
-        match ev {
-            OmnistonEvent::QuoteUpdated(q) => {
-                assert_eq!(q.quote_id, "SIDE_TEST");
-                assert_eq!(q.side, QuoteSide::Ask, "Side must be injected correctly");
-            }
-            _ => panic!("Expected QuoteUpdated event"),
-        }
-
-        // Also check that injection flips correctly for Bid
-        let ev2 = parse_omniston_event(&raw, &QuoteSide::Bid)
-            .unwrap()
-            .unwrap();
-
-        match ev2 {
-            OmnistonEvent::QuoteUpdated(q2) => {
-                assert_eq!(q2.side, QuoteSide::Bid);
-            }
-            _ => panic!("Expected QuoteUpdated event"),
-        }
     }
 }
