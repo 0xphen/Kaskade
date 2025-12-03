@@ -36,16 +36,16 @@ A *pulse* is a market micro-signal signaling:
 | STON.fi Swap Simulation API                                   | ✔            |
 | Omniston gRPC `buildTransfer`                                 | ✔            |
 | Spread Pulse                                                  | ✔            |
-| Slippage Pulse                                                | ✔            |
-| Micro-Trend Pulse                                             | ✔            |
+| Slippage Pulse                                                | ☐            |
+| Micro-Trend Pulse                                             | ☐            |
 | Scheduler (eligibility + RR selection)                        | ✔            |
 | Execution Engine & Worker Pool                                | ✔            |
 | Session Manager (user strategies)                             | ✔            |
 | Telegram Bot Command Flow                                     | ☐            |
-| Execution Manager Contract (EMC) for non-custodial automation | ⚙️ In Design |
+| Execution Manager Contract (EMC) for non-custodial automation | ☐            |
 | Depth Pulse                                                   | ☐            |
 | Volatility Pulse                                              | ☐            |
-| RFQ Imbalance Pulse                                           | ☐            |
+| Imbalance Pulse                                               | ☐            |
 | Backtesting Engine                                            | ☐            |
 | Strategy Studio & Web Dashboard                               | ☐            |
 
