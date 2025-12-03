@@ -4,8 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-corelib = { path = "../core" } 
-
 serde = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }

@@ -2,14 +2,14 @@
 edition = "2024"
 
 [workspace]
-members = ["core", "market", "scheduler", "session"]
+members = ["market", "scheduler", "session"]
 
 resolver = "2"
 
 [workspace.dependencies]
 # Workspace
 market = { path = "market" }
-core = { path = "core" }
+scheduler = { path = "scheduler" }
 session = { path = "session" }
 
 # External
