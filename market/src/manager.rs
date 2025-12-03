@@ -40,17 +40,17 @@ pub struct MarketManager<C> {
     pub subscribers: Arc<Mutex<HashMap<Pair, Vec<Sender<MarketMetrics>>>>>,
 
     /// Shared rolling window for spread metric computation
-    pub rolling_window: Arc<Mutex<RollingWindow>>,
+    pub rolling_window: Arc<Mutex<HashMap<Pair, RollingWindow>>>,
 }
 
 impl<C: OmnistonApi> MarketManager<C> {
     /// Create a new MarketManager wrapped in Arc<Self> for multi-task ownership.
-    pub fn new(omniston_ws_client: Arc<C>, max_age_ms: u64) -> Arc<Self> {
+    pub fn new(omniston_ws_client: Arc<C>) -> Arc<Self> {
         Arc::new(Self {
             omniston_ws_client,
             states: Arc::new(Mutex::new(HashMap::new())),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
-            rolling_window: Arc::new(Mutex::new(RollingWindow::new(max_age_ms))),
+            rolling_window: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -125,14 +125,13 @@ impl<C: OmnistonApi> MarketManager<C> {
             if let OmnistonEvent::QuoteUpdated(quote) = raw_event {
                 let nq = NormalizedQuote::from_event(&quote);
 
-                let mut rolling_window_guard = self.rolling_window.lock().await;
+                let mut rolling_window_map_guard = self.rolling_window.lock().await;
+                let window = rolling_window_map_guard
+                    .entry(pair.clone())
+                    .or_insert_with(|| RollingWindow::new());
 
-                let spread_pulse_result = compute_spread_pulse(
-                    nq.ts_ms,
-                    nq.amount_in,
-                    nq.amount_out,
-                    &mut rolling_window_guard,
-                );
+                let spread_pulse_result =
+                    compute_spread_pulse(nq.ts_ms, nq.amount_in, nq.amount_out, window);
 
                 let mut states_guard = self.states.lock().await;
                 let entry = states_guard

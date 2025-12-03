@@ -23,7 +23,7 @@ use market::{
 #[tokio::test]
 async fn mini_market_runner() {
     let mock_client = Arc::new(OmnistonWsClient::new("wss://omni-ws.ston.fi".into()));
-    let market = MarketManager::new(mock_client, 5_000); // 5s rolling window
+    let market = MarketManager::new(mock_client);
 
     // -----------------------------------------------
     // 2) Prepare a subscriber channel

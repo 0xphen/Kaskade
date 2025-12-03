@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 use std::time::{Duration, SystemTime};
 
+pub const DEFAULT_MAX_AGE_MS: u64 = 30_000;
+
 /// A timestamped value used inside the rolling window
 #[derive(Clone, Debug)]
 pub struct TimedValue<T> {
@@ -9,6 +11,7 @@ pub struct TimedValue<T> {
 }
 
 /// Rolling window with monotonic max queue for O(1) max()
+#[derive(Default)]
 pub struct RollingWindow {
     /// All values in the window (ordered by time)
     values: VecDeque<TimedValue<f64>>,
@@ -22,11 +25,11 @@ pub struct RollingWindow {
 }
 
 impl RollingWindow {
-    pub fn new(max_age_ms: u64) -> Self {
+    pub fn new() -> Self {
         Self {
             values: VecDeque::new(),
             max_queue: VecDeque::new(),
-            max_age_ms,
+            max_age_ms: DEFAULT_MAX_AGE_MS,
         }
     }
 

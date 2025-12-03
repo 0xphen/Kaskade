@@ -5,8 +5,8 @@ use market::{
     manager::MarketManager,
     omniston::OmnistonApi,
     types::{
-        AssetAddress, OmnistonEvent, Pair, Quote, QuoteParams, RfqAmount,
-        RfqRequest, SubscriptionRequest,
+        AssetAddress, OmnistonEvent, Pair, Quote, QuoteParams, RfqAmount, RfqRequest,
+        SubscriptionRequest,
     },
 };
 
@@ -74,7 +74,7 @@ fn test_pair() -> Pair {
 
 #[tokio::test]
 async fn subscription_registers_correctly() {
-    let mm = MarketManager::new(Arc::new(MockOmnistonClient), 5000);
+    let mm = MarketManager::new(Arc::new(MockOmnistonClient));
 
     let (tx, _rx) = mpsc::channel(10);
 
@@ -95,7 +95,7 @@ async fn subscription_registers_correctly() {
 
 #[tokio::test]
 async fn spread_metrics_are_updated_from_event_stream() {
-    let mm = MarketManager::new(Arc::new(MockOmnistonClient), 5000);
+    let mm = MarketManager::new(Arc::new(MockOmnistonClient));
 
     let (tx, rx) = mpsc::channel(10);
 
@@ -150,7 +150,7 @@ async fn spread_metrics_are_updated_from_event_stream() {
 
 #[tokio::test]
 async fn subscribers_receive_broadcasted_snapshots() {
-    let mm = MarketManager::new(Arc::new(MockOmnistonClient), 5000);
+    let mm = MarketManager::new(Arc::new(MockOmnistonClient));
     let pair = test_pair();
 
     let (sub_tx, mut sub_rx) = mpsc::channel(10);

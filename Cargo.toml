@@ -2,15 +2,15 @@
 edition = "2024"
 
 [workspace]
-members = ["core", "market"]
+members = ["core", "market", "session"]
 
 resolver = "2"
 
 [workspace.dependencies]
 # Workspace
-adapters = { path = "adapters" }
+market = { path = "market" }
 core = { path = "core" }
-engine = { path = "engine" }
+session = { path = "session" }
 
 # External
 async-trait = "0.1.89"

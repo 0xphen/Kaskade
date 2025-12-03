@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn first_tick_should_pulse_true() {
-        let mut window = RollingWindow::new(30_000); // 30s window
+        let mut window = RollingWindow::new();
 
         let res = compute_spread_pulse(
             ts(1),
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn spread_pulse_should_fire_when_within_threshold() {
-        let mut window = RollingWindow::new(30_000);
+        let mut window = RollingWindow::new();
 
         // Push some earlier prices
         window.push(ts(1), 0.50);
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn spread_pulse_should_fail_when_above_threshold() {
-        let mut window = RollingWindow::new(30_000);
+        let mut window = RollingWindow::new();
 
         // Best price so far = 0.52
         window.push(ts(1), 0.50);
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn bad_bid_units_should_disable_pulse() {
-        let mut window = RollingWindow::new(30_000);
+        let mut window = RollingWindow::new();
 
         let res = compute_spread_pulse(
             ts(1),
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn rolling_window_eviction_should_update_p_best() {
-        let mut window = RollingWindow::new(1000); // 1 second window
+        let mut window = RollingWindow::new();
 
         // Insert two prices:
         window.push(ts(1), 1.00); // will be too old
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn p_best_should_always_be_monotonic_deque_front() {
-        let mut window = RollingWindow::new(30_000);
+        let mut window = RollingWindow::new();
 
         // Insert values with known max = 3.0
         window.push(ts(1), 1.0);
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn pulse_should_not_fail_when_p_now_equals_p_best() {
-        let mut window = RollingWindow::new(30_000);
+        let mut window = RollingWindow::new();
 
         window.push(ts(1), 0.33);
         window.push(ts(2), 0.34); // best
