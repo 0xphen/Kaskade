@@ -83,6 +83,37 @@ pub struct Session {
     pub state: SessionState,
 }
 
+impl Default for Session {
+    fn default() -> Self {
+        Session {
+            id: SessionId::new_v4(),
+            user_id: 0,
+            pair: Pair::new("TON".into(), "STON".into()),
+
+            total_amount_in: 0,
+            chunk_amount_in: 0,
+            thresholds: SessionThresholds {
+                max_spread_bps: 100.0,
+                max_slippage_bps: 500.0,
+                trend_enabled: false,
+            },
+            created_at_ms: 0,
+            expires_at_ms: None,
+
+            approved_amount_in: None,
+            wallet_address: None,
+
+            remaining_amount_in: 0,
+            executed_amount_in: 0,
+            executed_amount_out: 0,
+            num_executed_chunks: 0,
+            last_execution_ts_ms: None,
+
+            state: SessionState::Created,
+        }
+    }
+}
+
 impl Session {
     pub fn can_fire_chunk(&self, metrics: &MarketMetrics, now_ms: u64) -> bool {
         if self.state != SessionState::Active {

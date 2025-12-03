@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 market = { path = "../market" } 
 session = { path = "../session" } 
+tokio = { workspace = true }
+async-trait = { workspace = true }
+anyhow = { workspace = true }
