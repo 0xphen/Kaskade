@@ -207,11 +207,11 @@ All logic is **non-custodial** and **verifiable on-chain**.
 ✔ STON.fi simulation  
 
 ### **Phase 2 — Non-Custodial Automation**  
-⚙️ Telegram UI  
-⚙️ Execution Manager Contract  
-⚙️ Backend-triggered micro-swap execution  
-⚙️ Secure session lifecycle  
-⚙️ User withdrawal  
+⬜ Telegram mini-app
+⬜ Execution Manager Contract  
+⬜ Backend-triggered micro-swap execution  
+⬜ Secure session lifecycle  
+⬜ User withdrawal  
 
 ### **Phase 3 — DeFi Automation Platform**  
 ⬜ All pulses (depth, volatility, slippage, trend, time-Decay, imbalance)  
