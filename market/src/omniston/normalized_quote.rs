@@ -36,7 +36,7 @@ impl NormalizedQuote {
     /// - Non-numeric `bid_units` / `ask_units` become 0.0
     /// - If `amount_in == 0`, price is set to 0.0
     pub fn from_event(ev: &Quote) -> Self {
-        let ts_ms = Utc::now().timestamp_millis() as u64;
+        let ts_ms = ev.quote_timestamp * 1000;
 
         let amount_in = ev.bid_units.parse::<f64>().unwrap_or(0.0);
         let amount_out = ev.ask_units.parse::<f64>().unwrap_or(0.0);
@@ -86,7 +86,7 @@ mod tests {
             protocol_fee_asset: dummy_addr(),
             protocol_fee_units: "0".into(),
 
-            quote_timestamp: 0,
+            quote_timestamp: 1234,
             trade_start_deadline: 0,
 
             gas_budget: "0".into(),
@@ -147,20 +147,5 @@ mod tests {
             let expected = nq.amount_out / nq.amount_in;
             assert!((nq.price - expected).abs() < 1e-12);
         }
-    }
-
-    // -------------------------------------------------------------
-    // 5. TIMESTAMP MUST BE NON-ZERO AND INCREASING
-    // -------------------------------------------------------------
-    #[test]
-    fn timestamp_validity() {
-        let q = mk_quote("100", "50");
-
-        let n1 = NormalizedQuote::from_event(&q);
-        let n2 = NormalizedQuote::from_event(&q);
-
-        assert!(n1.ts_ms > 0);
-        assert!(n2.ts_ms > 0);
-        assert!(n2.ts_ms >= n1.ts_ms);
     }
 }

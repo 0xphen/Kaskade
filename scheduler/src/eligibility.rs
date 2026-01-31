@@ -4,7 +4,7 @@
 //  This module is deliberately pure: no async, no IO.
 
 use super::types::SchedulerConfig;
-use market::pulse::spread::SpreadPulseResult;
+use market::pulse::spread::{PulseValidity, SpreadPulseResult};
 use market::types::MarketMetrics;
 use session::model::{Session, SessionState};
 
@@ -18,6 +18,7 @@ pub enum Eligibility {
     SpreadTooWide,
     SlippageTooHigh,
     TrendRejected,
+    PulseNotReady,
     Expired,
 }
 
@@ -46,10 +47,10 @@ pub fn check_session_eligibility(
         return Eligibility::NotActive;
     }
 
-    if let Some(expiry) = session.expires_at_ms {
-        if now_ms > expiry {
-            return Eligibility::Expired;
-        }
+    if let Some(expiry) = session.expires_at_ms
+        && now_ms > expiry
+    {
+        return Eligibility::Expired;
     }
 
     if session.remaining_amount_in == 0 {
@@ -62,6 +63,10 @@ pub fn check_session_eligibility(
         if elapsed < cfg.min_cooldown_ms {
             return Eligibility::CooldownNotElapsed;
         }
+    }
+
+    if matches!(metrics.spread.validity, PulseValidity::Invalid) {
+        return Eligibility::PulseNotReady;
     }
 
     // Thresholds vs MarketMetrics
@@ -110,6 +115,7 @@ mod tests {
                 p_now: 0.0,
                 p_best: 0.0,
                 spread_bps: spread,
+                validity: PulseValidity::Valid,
             },
         }
     }

@@ -81,7 +81,7 @@ pub struct Quote {
     pub protocol_fee_asset: AssetAddress,
     pub protocol_fee_units: String,
 
-    pub quote_timestamp: i64,
+    pub quote_timestamp: u64,
     pub trade_start_deadline: i64,
 
     pub gas_budget: String,

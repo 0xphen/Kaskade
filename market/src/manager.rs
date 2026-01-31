@@ -24,7 +24,7 @@ use super::{
     types::{MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
 };
 
-use crate::pulse::spread::compute_spread_pulse;
+use crate::pulse::spread::{SpreadWarmup, compute_spread_pulse};
 use crate::rolling_window::RollingWindow;
 
 /// MarketManager orchestrates RFQ streaming, quote normalization,
@@ -130,8 +130,13 @@ impl<C: OmnistonApi> MarketManager<C> {
                     .entry(pair.clone())
                     .or_insert_with(|| RollingWindow::new());
 
-                let spread_pulse_result =
-                    compute_spread_pulse(nq.ts_ms, nq.amount_in, nq.amount_out, window);
+                let spread_pulse_result = compute_spread_pulse(
+                    nq.ts_ms,
+                    nq.amount_in,
+                    nq.amount_out,
+                    window,
+                    SpreadWarmup::default(),
+                );
 
                 let mut states_guard = self.states.lock().await;
                 let entry = states_guard

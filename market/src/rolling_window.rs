@@ -33,6 +33,31 @@ impl RollingWindow {
         }
     }
 
+    /// Number of samples currently in the window
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    /// Age of the window in milliseconds (oldest → newest)
+    pub fn age_ms(&self) -> Option<u64> {
+        let first = self.values.front()?;
+        let last = self.values.back()?;
+        Some(last.ts_ms.saturating_sub(first.ts_ms))
+    }
+
+    /// Whether the window is "warm"
+    pub fn is_warm(&self, min_samples: usize, min_age_ms: u64) -> bool {
+        if self.len() < min_samples {
+            return false;
+        }
+
+        if let Some(age) = self.age_ms() {
+            age >= min_age_ms
+        } else {
+            false
+        }
+    }
+
     pub fn push(&mut self, ts_ms: u64, price: f64) {
         let val = TimedValue {
             ts_ms,
@@ -60,10 +85,10 @@ impl RollingWindow {
             if now_ms - front.ts_ms > self.max_age_ms {
                 let removed = self.values.pop_front().unwrap();
 
-                if let Some(max_front) = self.max_queue.front() {
-                    if max_front.ts_ms == removed.ts_ms {
-                        self.max_queue.pop_front();
-                    }
+                if let Some(max_front) = self.max_queue.front()
+                    && max_front.ts_ms == removed.ts_ms
+                {
+                    self.max_queue.pop_front();
                 }
             } else {
                 break;
