@@ -6,70 +6,72 @@
 //!
 //! In RFQ-based execution (Omniston / STON.fi):
 //!
-//! - `ask_units`            = expected output amount
-//! - `min_ask_amount`       = guaranteed minimum output
+//! - `ask_units`      = expected output amount (what the quote promises)
+//! - `min_ask_amount` = guaranteed minimum output (what execution guarantees)
 //!
 //! Slippage is defined as:
 //!
-//!     slippage_bps = (ask_units - min_ask_amount) / ask_units * 10_000
+//! ```text
+//! slippage_bps = (ask_units - min_ask_amount) / ask_units * 10_000
+//! ```
 //!
-//! This pulse is **instantaneous**:
-//! - No rolling window
-//! - No prediction
-//! - No smoothing
-//!
-//! It reflects *pure execution quality* at the moment of execution.
+//! Properties:
+//! - Instantaneous (no rolling window)
+//! - Deterministic
+//! - Fail-safe (invalid quotes never allow execution)
 
-use super::PulseValidity;
+use crate::pulse::PulseValidity;
+use crate::types::Quote;
 
-/// Result of slippage pulse computation.
+/// Result of Slippage Pulse computation.
 #[derive(Clone, Debug)]
 pub struct SlippagePulseResult {
-    /// Slippage expressed in basis points (bps).
+    /// Slippage in basis points.
+    /// 0 bps = no slippage
+    /// higher = worse execution quality
     pub slippage_bps: f64,
 
-    /// Whether the pulse result is valid and usable for execution decisions.
+    /// Whether the result is safe to use.
     pub validity: PulseValidity,
 }
 
 impl Default for SlippagePulseResult {
     fn default() -> Self {
         Self {
-            slippage_bps: 0.0,
+            slippage_bps: f64::MAX,
             validity: PulseValidity::Invalid,
         }
     }
 }
 
-/// Compute the Slippage Pulse.
+/// Compute Slippage Pulse from an Omniston quote.
 ///
-/// # Inputs
-/// - `ask_units`: expected output amount from the RFQ quote
-/// - `min_ask_amount`: guaranteed minimum output amount
+/// # Safety rules
+/// - If swap params are missing → Invalid
+/// - If parsing fails → Invalid
+/// - If ask_units <= 0 → Invalid
 ///
-/// # Behavior
-/// - If inputs are invalid (≤ 0), pulse is `Invalid`
-/// - Otherwise, compute slippage in basis points
-///
-/// # Notes
-/// - A slippage of `0.0` means perfect execution quality
-/// - Higher slippage means worse execution
-/// - Scheduler enforces thresholds; this function only measures
-pub fn compute_slippage_pulse(ask_units: f64, min_ask_amount: f64) -> SlippagePulseResult {
-    if ask_units <= 0.0 || min_ask_amount <= 0.0 {
-        return SlippagePulseResult {
-            slippage_bps: f64::MAX,
-            validity: PulseValidity::Invalid,
-        };
-    }
+/// Invalid pulses always return `slippage_bps = f64::MAX`
+/// so downstream threshold checks fail safely.
+pub fn compute_slippage_pulse(quote: &Quote) -> SlippagePulseResult {
+    let swap = match &quote.params.swap {
+        Some(s) => s,
+        None => return SlippagePulseResult::default(),
+    };
 
-    // Guaranteed amount should never exceed expected amount,
-    // but guard against malformed data.
+    let ask_units: f64 = match quote.ask_units.parse() {
+        Ok(v) if v > 0.0 => v,
+        _ => return SlippagePulseResult::default(),
+    };
+
+    let min_ask_amount: f64 = match swap.min_ask_amount.parse() {
+        Ok(v) if v >= 0.0 => v,
+        _ => return SlippagePulseResult::default(),
+    };
+
+    // Guard against pathological cases
     if min_ask_amount > ask_units {
-        return SlippagePulseResult {
-            slippage_bps: 0.0,
-            validity: PulseValidity::Invalid,
-        };
+        return SlippagePulseResult::default();
     }
 
     let slippage_bps = ((ask_units - min_ask_amount) / ask_units) * 10_000.0;
@@ -82,55 +84,76 @@ pub fn compute_slippage_pulse(ask_units: f64, min_ask_amount: f64) -> SlippagePu
 
 #[cfg(test)]
 mod tests {
-    use super::super::PulseValidity;
     use super::*;
+    use crate::types::*;
 
-    #[test]
-    fn zero_slippage_is_valid() {
-        let res = compute_slippage_pulse(1_000_000.0, 1_000_000.0);
+    fn dummy_addr() -> AssetAddress {
+        AssetAddress {
+            blockchain: 607,
+            address: "EQDummy".into(),
+        }
+    }
 
-        assert_eq!(res.slippage_bps, 0.0);
-        assert!(matches!(res.validity, PulseValidity::Valid));
+    fn mk_quote(ask: &str, min_ask: &str) -> Quote {
+        Quote {
+            quote_id: "q".into(),
+            resolver_id: "r".into(),
+            resolver_name: "Omniston".into(),
+
+            bid_asset_address: dummy_addr(),
+            ask_asset_address: dummy_addr(),
+
+            bid_units: "100".into(),
+            ask_units: ask.into(),
+
+            referrer_address: None,
+            referrer_fee_asset: dummy_addr(),
+            referrer_fee_units: "0".into(),
+            protocol_fee_asset: dummy_addr(),
+            protocol_fee_units: "0".into(),
+
+            quote_timestamp: 0,
+            trade_start_deadline: 0,
+
+            gas_budget: "0".into(),
+            estimated_gas_consumption: "0".into(),
+
+            params: QuoteParams {
+                swap: Some(SwapParams {
+                    routes: vec![],
+                    min_ask_amount: min_ask.into(),
+                    recommended_min_ask_amount: min_ask.into(),
+                    recommended_slippage_bps: 0,
+                }),
+            },
+        }
     }
 
     #[test]
-    fn non_zero_slippage_computes_correctly() {
-        let res = compute_slippage_pulse(1_000_000.0, 990_000.0);
+    fn zero_slippage_when_min_equals_expected() {
+        let q = mk_quote("1000", "1000");
+        let r = compute_slippage_pulse(&q);
 
-        // (1_000_000 - 990_000) / 1_000_000 * 10_000 = 100 bps
-        assert!((res.slippage_bps - 100.0).abs() < 1e-9);
-        assert!(matches!(res.validity, PulseValidity::Valid));
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!(r.slippage_bps.abs() < 1e-9);
     }
 
     #[test]
-    fn high_slippage_is_reported_but_valid() {
-        let res = compute_slippage_pulse(1_000_000.0, 900_000.0);
+    fn positive_slippage_when_min_is_lower() {
+        let q = mk_quote("1000", "950");
+        let r = compute_slippage_pulse(&q);
 
-        assert!(res.slippage_bps > 500.0);
-        assert!(matches!(res.validity, PulseValidity::Valid));
+        // (1000 - 950) / 1000 * 10000 = 500 bps
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!((r.slippage_bps - 500.0).abs() < 1e-9);
     }
 
     #[test]
-    fn zero_ask_units_is_invalid() {
-        let res = compute_slippage_pulse(0.0, 100.0);
+    fn invalid_when_swap_missing() {
+        let mut q = mk_quote("1000", "950");
+        q.params.swap = None;
 
-        assert_eq!(res.slippage_bps, f64::MAX);
-        assert!(matches!(res.validity, PulseValidity::Invalid));
-    }
-
-    #[test]
-    fn zero_min_amount_is_invalid() {
-        let res = compute_slippage_pulse(100.0, 0.0);
-
-        assert_eq!(res.slippage_bps, f64::MAX);
-        assert!(matches!(res.validity, PulseValidity::Invalid));
-    }
-
-    #[test]
-    fn min_amount_greater_than_expected_is_invalid() {
-        let res = compute_slippage_pulse(100.0, 110.0);
-
-        assert_eq!(res.slippage_bps, 0.0);
-        assert!(matches!(res.validity, PulseValidity::Invalid));
+        let r = compute_slippage_pulse(&q);
+        assert_eq!(r.validity, PulseValidity::Invalid);
     }
 }

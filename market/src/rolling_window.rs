@@ -37,6 +37,11 @@ impl RollingWindow {
         self.values.len()
     }
 
+    /// Oldest value in the window
+    pub fn oldest(&self) -> Option<f64> {
+        self.values.front().map(|v| v.value)
+    }
+
     /// Age of the window in milliseconds (oldest → newest)
     pub fn age_ms(&self) -> Option<u64> {
         let first = self.values.front()?;
