@@ -1,6 +1,6 @@
 mod mock_store;
 
-use market::pulse::spread::{PulseValidity, SpreadPulseResult};
+use market::pulse::{PulseValidity, slippage::SlippagePulseResult, spread::SpreadPulseResult};
 use market::types::{MarketMetrics, Pair};
 use session::model::{Session, SessionId, SessionState, SessionThresholds};
 use session::store::SessionStore;
@@ -19,6 +19,10 @@ fn mk_metrics(spread: f64) -> MarketMetrics {
             p_best: 0.0,
             spread_bps: spread,
             validity: PulseValidity::Valid,
+        },
+        slippage: SlippagePulseResult {
+            slippage_bps: 0.0,
+            validity: PulseValidity::Invalid,
         },
     }
 }

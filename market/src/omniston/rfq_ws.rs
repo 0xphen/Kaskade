@@ -131,8 +131,6 @@ impl OmnistonApi for OmnistonWsClient {
 
                         let raw = msg.to_text()?;
 
-                        println!("RAW: {}", raw);
-
                         if let Some(ev) = parse_omniston_event(raw, &super::QuoteSide::Bid)? {
                             let _ = sender.send(ev).await;
                         }

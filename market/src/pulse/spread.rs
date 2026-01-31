@@ -31,16 +31,8 @@
 //!
 //! Any I/O (websocket, storage, logging) must live outside this module.
 
+use super::PulseValidity;
 use crate::rolling_window::RollingWindow;
-
-/// Indicates whether a pulse result is safe to use for trading decisions.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PulseValidity {
-    /// Warming up (not enough history). MUST NOT be used to trigger execution.
-    Invalid,
-    /// Sufficient history exists. Safe to use for eligibility checks.
-    Valid,
-}
 
 /// Spread pulse output used by the scheduler and for observability.
 ///
@@ -142,7 +134,7 @@ pub fn compute_spread_pulse(
             p_now,
             p_best: p_now,
             spread_bps: f64::MAX,
-            validity: PulseValidity::Invalid,
+            validity: super::PulseValidity::Invalid,
         };
     }
 
@@ -159,13 +151,14 @@ pub fn compute_spread_pulse(
         p_now,
         p_best,
         spread_bps,
-        validity: PulseValidity::Valid,
+        validity: super::PulseValidity::Valid,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pulse::PulseValidity;
     use crate::rolling_window::RollingWindow;
 
     fn ms(n: u64) -> u64 {

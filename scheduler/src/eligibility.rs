@@ -4,7 +4,7 @@
 //  This module is deliberately pure: no async, no IO.
 
 use super::types::SchedulerConfig;
-use market::pulse::spread::{PulseValidity, SpreadPulseResult};
+use market::pulse::{PulseValidity, spread::SpreadPulseResult};
 use market::types::MarketMetrics;
 use session::model::{Session, SessionState};
 
@@ -90,7 +90,7 @@ pub fn check_session_eligibility(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use market::types::MarketMetrics;
+    use market::{pulse::slippage::SlippagePulseResult, types::MarketMetrics};
     use session::model::{Session, SessionState, SessionThresholds};
 
     fn base_cfg() -> SchedulerConfig {
@@ -116,6 +116,10 @@ mod tests {
                 p_best: 0.0,
                 spread_bps: spread,
                 validity: PulseValidity::Valid,
+            },
+            slippage: SlippagePulseResult {
+                slippage_bps: 0.0,
+                validity: PulseValidity::Invalid,
             },
         }
     }

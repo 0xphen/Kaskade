@@ -1,5 +1,4 @@
 use std::collections::VecDeque;
-use std::time::{Duration, SystemTime};
 
 pub const DEFAULT_MAX_AGE_MS: u64 = 30_000;
 

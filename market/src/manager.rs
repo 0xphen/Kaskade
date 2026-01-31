@@ -24,7 +24,10 @@ use super::{
     types::{MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
 };
 
-use crate::pulse::spread::{SpreadWarmup, compute_spread_pulse};
+use crate::pulse::{
+    PulseValidity,
+    spread::{SpreadWarmup, compute_spread_pulse},
+};
 use crate::rolling_window::RollingWindow;
 
 /// MarketManager orchestrates RFQ streaming, quote normalization,
@@ -137,6 +140,11 @@ impl<C: OmnistonApi> MarketManager<C> {
                     window,
                     SpreadWarmup::default(),
                 );
+
+                if spread_pulse_result.validity == PulseValidity::Invalid {
+                    println!("Current spread_pulse_result is invalid.");
+                    continue;
+                }
 
                 let mut states_guard = self.states.lock().await;
                 let entry = states_guard
