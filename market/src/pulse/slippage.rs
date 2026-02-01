@@ -1,37 +1,48 @@
-//! Slippage Pulse
-//!
-//! This module computes the **Slippage Pulse**, which measures execution
-//! quality degradation between the *expected* output of a swap and the
-//! *guaranteed minimum* output provided by Omniston.
-//!
-//! In RFQ-based execution (Omniston / STON.fi):
-//!
-//! - `ask_units`      = expected output amount (what the quote promises)
-//! - `min_ask_amount` = guaranteed minimum output (what execution guarantees)
-//!
-//! Slippage is defined as:
-//!
-//! ```text
-//! slippage_bps = (ask_units - min_ask_amount) / ask_units * 10_000
-//! ```
-//!
-//! Properties:
-//! - Instantaneous (no rolling window)
-//! - Deterministic
-//! - Fail-safe (invalid quotes never allow execution)
-
-use crate::pulse::PulseValidity;
+use crate::pulse::input::QuoteInput;
+use crate::pulse::{Pulse, PulseResult, PulseValidity};
 use crate::types::Quote;
 
-/// Result of Slippage Pulse computation.
+/// Slippage Pulse
+///
+/// The Slippage Pulse measures **execution quality degradation** for a *single RFQ*.
+///
+/// Unlike spread or trend, this pulse is **not historical** and **not predictive**.
+/// It answers only one question:
+///
+/// > “How much worse can this trade execute than the quoted expectation?”
+///
+/// ## Data source
+/// From an Omniston RFQ quote:
+/// - `ask_units`        → expected output amount
+/// - `min_ask_amount`  → guaranteed minimum output
+///
+/// These values are *resolver-enforced*, not estimates.
+///
+/// ## Definition
+///
+/// ```text
+/// slippage_bps = (ask_units - min_ask_amount) / ask_units * 10_000
+/// ```
+///
+/// ## Properties
+/// - **Instantaneous**: computed per-quote, no rolling window
+/// - **Deterministic**: same input → same output
+/// - **Fail-safe**: malformed or unsafe quotes are always `Invalid`
+///
+/// ## Interpretation
+/// - `0 bps`        → perfect execution (no downside)
+/// - `> 0 bps`      → increasing execution risk
+/// - `Invalid`      → execution must be blocked
+///
+/// ## Design rule
+/// This pulse is a **hard safety gate**.
+/// If slippage is invalid or exceeds user tolerance, *no execution is allowed*.
 #[derive(Clone, Debug)]
 pub struct SlippagePulseResult {
-    /// Slippage in basis points.
-    /// 0 bps = no slippage
-    /// higher = worse execution quality
+    /// Slippage expressed in basis points.
     pub slippage_bps: f64,
 
-    /// Whether the result is safe to use.
+    /// Validity guard.
     pub validity: PulseValidity,
 }
 
@@ -44,16 +55,44 @@ impl Default for SlippagePulseResult {
     }
 }
 
-/// Compute Slippage Pulse from an Omniston quote.
+impl PulseResult for SlippagePulseResult {
+    fn validity(&self) -> PulseValidity {
+        self.validity
+    }
+}
+
+/// Stateless Slippage Pulse.
 ///
-/// # Safety rules
-/// - If swap params are missing → Invalid
-/// - If parsing fails → Invalid
-/// - If ask_units <= 0 → Invalid
+/// This pulse owns **no internal state** and may be reused freely.
+/// It is safe to share one instance across all pairs.
+pub struct SlippagePulse;
+
+impl Pulse for SlippagePulse {
+    type Input = QuoteInput;
+    type Output = SlippagePulseResult;
+
+    fn evaluate(&mut self, input: Self::Input) -> Self::Output {
+        compute_slippage(&input.quote)
+    }
+}
+
+/// Core slippage computation.
 ///
-/// Invalid pulses always return `slippage_bps = f64::MAX`
-/// so downstream threshold checks fail safely.
-pub fn compute_slippage_pulse(quote: &Quote) -> SlippagePulseResult {
+/// ### Safety invariants
+/// This function **must never allow execution on bad data**.
+///
+/// Invalid if:
+/// - swap params are missing
+/// - numeric parsing fails
+/// - `ask_units <= 0`
+/// - `min_ask_amount > ask_units` (malformed quote)
+///
+/// All invalid paths return:
+/// - `slippage_bps = f64::MAX`
+/// - `validity = Invalid`
+///
+/// This guarantees downstream threshold checks always fail safely.
+fn compute_slippage(quote: &Quote) -> SlippagePulseResult {
     let swap = match &quote.params.swap {
         Some(s) => s,
         None => return SlippagePulseResult::default(),
@@ -69,7 +108,7 @@ pub fn compute_slippage_pulse(quote: &Quote) -> SlippagePulseResult {
         _ => return SlippagePulseResult::default(),
     };
 
-    // Guard against pathological cases
+    // Malformed or inconsistent quote → block execution
     if min_ask_amount > ask_units {
         return SlippagePulseResult::default();
     }
@@ -130,30 +169,64 @@ mod tests {
     }
 
     #[test]
-    fn zero_slippage_when_min_equals_expected() {
+    fn zero_slippage_is_valid_and_exact() {
         let q = mk_quote("1000", "1000");
-        let r = compute_slippage_pulse(&q);
+        let r = compute_slippage(&q);
 
         assert_eq!(r.validity, PulseValidity::Valid);
-        assert!(r.slippage_bps.abs() < 1e-9);
+        assert_eq!(r.slippage_bps, 0.0);
     }
 
     #[test]
-    fn positive_slippage_when_min_is_lower() {
+    fn slippage_matches_expected_formula() {
         let q = mk_quote("1000", "950");
-        let r = compute_slippage_pulse(&q);
+        let r = compute_slippage(&q);
 
-        // (1000 - 950) / 1000 * 10000 = 500 bps
+        // (1000 - 950) / 1000 * 10_000 = 500 bps
         assert_eq!(r.validity, PulseValidity::Valid);
         assert!((r.slippage_bps - 500.0).abs() < 1e-9);
     }
 
     #[test]
-    fn invalid_when_swap_missing() {
+    fn missing_swap_params_blocks_execution() {
         let mut q = mk_quote("1000", "950");
         q.params.swap = None;
 
-        let r = compute_slippage_pulse(&q);
+        let r = compute_slippage(&q);
+
         assert_eq!(r.validity, PulseValidity::Invalid);
+        assert_eq!(r.slippage_bps, f64::MAX);
+    }
+
+    #[test]
+    fn malformed_quote_min_greater_than_ask_is_invalid() {
+        let q = mk_quote("1000", "1100");
+        let r = compute_slippage(&q);
+
+        assert_eq!(r.validity, PulseValidity::Invalid);
+    }
+
+    #[test]
+    fn zero_or_negative_ask_blocks_execution() {
+        let q1 = mk_quote("0", "0");
+        let q2 = mk_quote("-10", "0");
+
+        assert!(matches!(
+            compute_slippage(&q1).validity,
+            PulseValidity::Invalid
+        ));
+        assert!(matches!(
+            compute_slippage(&q2).validity,
+            PulseValidity::Invalid
+        ));
+    }
+
+    #[test]
+    fn large_numbers_do_not_overflow_or_panic() {
+        let q = mk_quote("1000000000000000000", "999999999999999999");
+        let r = compute_slippage(&q);
+
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!(r.slippage_bps >= 0.0);
     }
 }

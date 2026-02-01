@@ -24,11 +24,7 @@ use super::{
     types::{MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
 };
 
-use crate::pulse::{
-    PulseValidity,
-    spread::{SpreadWarmup, compute_spread_pulse},
-};
-use crate::rolling_window::RollingWindow;
+use crate::pulse::{PairPulseState, Pulse, PulseValidity, input::*};
 
 /// MarketManager orchestrates RFQ streaming, quote normalization,
 /// rolling-window metric computation, and snapshot broadcasting.
@@ -42,8 +38,8 @@ pub struct MarketManager<C> {
     /// Component subscribers interested in receiving market snapshots
     pub subscribers: Arc<Mutex<HashMap<Pair, Vec<Sender<MarketMetrics>>>>>,
 
-    /// Shared rolling window for spread metric computation
-    pub rolling_window: Arc<Mutex<HashMap<Pair, RollingWindow>>>,
+    /// Per-pair pulse engines (spread, trend, depth)
+    pub pulses: Arc<Mutex<HashMap<Pair, PairPulseState>>>,
 }
 
 impl<C: OmnistonApi> MarketManager<C> {
@@ -53,7 +49,7 @@ impl<C: OmnistonApi> MarketManager<C> {
             omniston_ws_client,
             states: Arc::new(Mutex::new(HashMap::new())),
             subscribers: Arc::new(Mutex::new(HashMap::new())),
-            rolling_window: Arc::new(Mutex::new(HashMap::new())),
+            pulses: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 
@@ -118,54 +114,92 @@ impl<C: OmnistonApi> MarketManager<C> {
     ///   • Compute spread pulse
     ///   • Update MarketMetrics
     ///   • Notify all subscribers for that pair
-    #[doc(hidden)]
     pub async fn process_event_stream(
         self: Arc<Self>,
         mut event_rx: Receiver<OmnistonEvent>,
         pair: Pair,
     ) {
         while let Some(raw_event) = event_rx.recv().await {
-            if let OmnistonEvent::QuoteUpdated(quote) = raw_event {
-                let nq = NormalizedQuote::from_event(&quote);
+            let OmnistonEvent::QuoteUpdated(quote) = raw_event else {
+                continue;
+            };
 
-                let mut rolling_window_map_guard = self.rolling_window.lock().await;
-                let window = rolling_window_map_guard
+            let nq = NormalizedQuote::from_event(&quote);
+
+            // ---- Build inputs ----
+            let price_input = PriceInput {
+                ts_ms: nq.ts_ms,
+                bid_units: nq.bid_units,
+                ask_units: nq.ask_units,
+            };
+
+            let quote_input = QuoteInput {
+                ts_ms: nq.ts_ms,
+                quote: Arc::from(quote),
+            };
+
+            // ---- Evaluate pulses (stateful, sequential) ----
+            let (spread, trend, depth, slippage) = {
+                let mut pulses_guard = self.pulses.lock().await;
+
+                let pulse_state = pulses_guard
                     .entry(pair.clone())
-                    .or_insert_with(|| RollingWindow::new());
+                    .or_insert_with(PairPulseState::default);
 
-                let spread_pulse_result = compute_spread_pulse(
-                    nq.ts_ms,
-                    nq.amount_in,
-                    nq.amount_out,
-                    window,
-                    SpreadWarmup::default(),
-                );
+                (
+                    pulse_state.spread.evaluate(price_input),
+                    pulse_state.trend.evaluate(price_input),
+                    pulse_state.depth.evaluate(quote_input.clone()),
+                    pulse_state.slipage.evaluate(quote_input),
+                )
+            };
 
-                if spread_pulse_result.validity == PulseValidity::Invalid {
-                    println!("Current spread_pulse_result is invalid.");
-                    continue;
-                }
+            // ---- Validity gating ----
+            if !matches!(
+                (
+                    spread.validity,
+                    trend.validity,
+                    depth.validity,
+                    slippage.validity
+                ),
+                (
+                    PulseValidity::Valid,
+                    PulseValidity::Valid,
+                    PulseValidity::Valid,
+                    PulseValidity::Valid
+                )
+            ) {
+                // Optional: debug log here
+                continue;
+            }
 
+            // ---- Update MarketMetrics ----
+            let snapshot = {
                 let mut states_guard = self.states.lock().await;
+
                 let entry = states_guard
                     .entry(pair.clone())
                     .or_insert_with(MarketMetrics::default);
 
-                entry.spread = spread_pulse_result;
-                let snapshot = entry.clone();
+                entry.spread = spread;
+                entry.trend = trend;
+                entry.depth = depth;
+                entry.slippage = slippage;
 
-                // Broadcast snapshot to subscribers
-                let subs_guard = self.subscribers.lock().await;
+                entry.clone()
+            };
 
-                if let Some(channels) = subs_guard.get(&pair) {
-                    for ch in channels {
-                        let _ = ch.send(snapshot.clone()).await;
-                    }
+            // ---- Broadcast ----
+            let subs_guard = self.subscribers.lock().await;
+
+            if let Some(channels) = subs_guard.get(&pair) {
+                for ch in channels {
+                    let _ = ch.send(snapshot.clone()).await;
                 }
             }
         }
 
-        println!("⚠️ Event receiver ended for pair {}", pair.id());
+        println!("⚠️ RFQ stream ended for pair {}", pair.id());
     }
 
     /// Map a Pair to its blockchain asset addresses.

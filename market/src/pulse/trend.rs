@@ -1,45 +1,64 @@
-//! Trend Pulse
-//!
-//! The Trend Pulse is a **directional execution safety signal**.
-//!
-//! Goal:
-//! - Prevent execution while price is **moving against the user**
-//! - Avoid “falling knife” executions even when spread looks acceptable
-//!
-//! In RFQ context, trend is measured over **executable prices**,
-//! not mid prices or order-book signals.
-//!
-//! Trend definition (v0.1):
-//! - Maintain a rolling window of recent prices (p = ask_units / bid_units)
-//! - Compare the current price to the **oldest price** in the window
-//! - Measure directional drop in basis points
-//!
-//!     trend_drop_bps = (p_oldest - p_now) / p_oldest * 10_000
-//!
-//! Interpretation:
-//! - trend_drop_bps <= 0   → flat or rising → OK
-//! - trend_drop_bps small  → mild drift → OK
-//! - trend_drop_bps large  → falling market → block execution
-//!
-//! This pulse is **not predictive**.
-//! It is a **protective guardrail**.
-
-use crate::pulse::PulseValidity;
+use crate::pulse::input::PriceInput;
+use crate::pulse::{Pulse, PulseResult, PulseValidity};
 use crate::rolling_window::RollingWindow;
 
-/// Output of the Trend Pulse.
+/// Trend Pulse
+///
+/// The Trend Pulse measures **price directionality over time**.
+///
+/// ## What it answers
+/// > “Is the execution price getting worse compared to where it started recently?”
+///
+/// This pulse detects **downward price trends** that may indicate:
+/// - deteriorating execution conditions
+/// - adverse momentum
+/// - rising execution risk
+///
+/// ## Price definition
+///
+/// ```text
+/// p = ask_units / bid_units
+/// ```
+///
+/// Higher `p` means a better execution rate for the buyer.
+///
+/// ## Trend definition
+///
+/// The pulse compares the **oldest price in the rolling window**
+/// with the **current price**:
+///
+/// ```text
+/// trend_drop_bps = (p_oldest - p_now) / p_oldest * 10_000
+/// ```
+///
+/// ## Interpretation
+/// - `trend_drop_bps > 0` → price is deteriorating (downward trend)
+/// - `trend_drop_bps = 0` → flat
+/// - `trend_drop_bps < 0` → improving execution
+///
+/// ## Warm-up guard
+/// The pulse is marked `Invalid` until:
+/// - a minimum number of samples is collected
+/// - the window spans a minimum time duration
+///
+/// ## Design properties
+/// - Rolling-window based
+/// - Directional (not magnitude-focused)
+/// - Deterministic
+/// - Bounded memory
+/// - Fail-safe (invalid data never allows execution)
 #[derive(Clone, Debug)]
 pub struct TrendPulseResult {
-    /// Current price (ask_units / bid_units)
+    /// Current price.
     pub p_now: f64,
 
-    /// Oldest price in the rolling window
+    /// Oldest price in the rolling window.
     pub p_oldest: f64,
 
-    /// Downward price movement in basis points
+    /// Downward price movement in basis points.
     pub trend_drop_bps: f64,
 
-    /// Whether the pulse is valid (warm-up complete)
+    /// Validity guard.
     pub validity: PulseValidity,
 }
 
@@ -54,7 +73,13 @@ impl Default for TrendPulseResult {
     }
 }
 
-/// Warm-up configuration for Trend Pulse.
+impl PulseResult for TrendPulseResult {
+    fn validity(&self) -> PulseValidity {
+        self.validity
+    }
+}
+
+/// Warm-up configuration for the Trend Pulse.
 #[derive(Clone, Copy, Debug)]
 pub struct TrendWarmup {
     pub min_samples: usize,
@@ -64,28 +89,53 @@ pub struct TrendWarmup {
 impl Default for TrendWarmup {
     fn default() -> Self {
         Self {
-            min_samples: 10,
-            min_age_ms: 5_000,
+            min_samples: super::MIN_SAMPLES,
+            min_age_ms: super::MIN_AGE_MS,
         }
     }
 }
 
-/// Compute the Trend Pulse.
+/// Trend pulse state.
 ///
-/// # Inputs
-/// - `ts_ms`: timestamp in milliseconds
-/// - `bid_units`: input amount
-/// - `ask_units`: output amount
-/// - `window`: rolling window storing recent prices
-/// - `warmup`: warm-up thresholds
+/// Maintains a rolling window of recent prices.
+pub struct TrendPulse {
+    window: RollingWindow,
+    warmup: TrendWarmup,
+}
+
+impl TrendPulse {
+    pub fn new(warmup: TrendWarmup) -> Self {
+        Self {
+            window: RollingWindow::new(),
+            warmup,
+        }
+    }
+}
+
+impl Pulse for TrendPulse {
+    type Input = PriceInput;
+    type Output = TrendPulseResult;
+
+    fn evaluate(&mut self, input: Self::Input) -> Self::Output {
+        compute_trend(
+            input.ts_ms,
+            input.bid_units,
+            input.ask_units,
+            &mut self.window,
+            self.warmup,
+        )
+    }
+}
+
+/// Core trend computation.
 ///
-/// # Output
-/// Returns `TrendPulseResult`.
+/// Safety rules:
+/// - `bid_units <= 0` → Invalid
+/// - Warm-up not satisfied → Invalid
 ///
-/// # Safety
-/// - Invalid if bid_units <= 0
-/// - Invalid during warm-up
-pub fn compute_trend_pulse(
+/// Invalid cases always return `trend_drop_bps = f64::MAX`
+/// to guarantee downstream threshold checks fail.
+fn compute_trend(
     ts_ms: u64,
     bid_units: f64,
     ask_units: f64,
@@ -97,11 +147,8 @@ pub fn compute_trend_pulse(
     }
 
     let p_now = ask_units / bid_units;
-
-    // Push latest price into the rolling window
     window.push(ts_ms, p_now);
 
-    // Warm-up safeguard
     if !window.is_warm(warmup.min_samples, warmup.min_age_ms) {
         return TrendPulseResult {
             p_now,
@@ -111,7 +158,6 @@ pub fn compute_trend_pulse(
         };
     }
 
-    // Oldest price = first element in the window
     let p_oldest = window.oldest().unwrap_or(p_now);
 
     let trend_drop_bps = if p_oldest > 0.0 {
@@ -131,7 +177,7 @@ pub fn compute_trend_pulse(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rolling_window::RollingWindow;
+    use crate::pulse::PulseValidity;
 
     fn ms(n: u64) -> u64 {
         n * 1000
@@ -148,44 +194,58 @@ mod tests {
     fn invalid_when_bid_units_zero() {
         let mut w = RollingWindow::new();
 
-        let res = compute_trend_pulse(ms(0), 0.0, 100.0, &mut w, warmup());
-        assert!(matches!(res.validity, PulseValidity::Invalid));
+        let r = compute_trend(ms(0), 0.0, 100.0, &mut w, warmup());
+        assert_eq!(r.validity, PulseValidity::Invalid);
+        assert_eq!(r.trend_drop_bps, f64::MAX);
     }
 
     #[test]
-    fn warmup_blocks_first_ticks() {
+    fn warmup_blocks_early_trend_signals() {
         let mut w = RollingWindow::new();
 
-        let r1 = compute_trend_pulse(ms(0), 100.0, 50.0, &mut w, warmup());
-        let r2 = compute_trend_pulse(ms(1), 100.0, 49.5, &mut w, warmup());
+        let r1 = compute_trend(ms(0), 100.0, 50.0, &mut w, warmup());
+        let r2 = compute_trend(ms(1), 100.0, 49.0, &mut w, warmup());
 
-        assert!(matches!(r1.validity, PulseValidity::Invalid));
-        assert!(matches!(r2.validity, PulseValidity::Invalid));
+        assert_eq!(r1.validity, PulseValidity::Invalid);
+        assert_eq!(r2.validity, PulseValidity::Invalid);
     }
 
     #[test]
-    fn trend_detects_downward_movement() {
-        let mut w = RollingWindow::new();
-        let wup = warmup();
-
-        compute_trend_pulse(ms(0), 100.0, 50.0, &mut w, wup); // 0.50
-        compute_trend_pulse(ms(1), 100.0, 49.0, &mut w, wup); // 0.49
-        let r3 = compute_trend_pulse(ms(2), 100.0, 48.0, &mut w, wup); // 0.48
-
-        assert!(matches!(r3.validity, PulseValidity::Valid));
-        assert!(r3.trend_drop_bps > 0.0);
-    }
-
-    #[test]
-    fn trend_zero_when_flat_or_rising() {
+    fn detects_downward_trend() {
         let mut w = RollingWindow::new();
         let wup = warmup();
 
-        compute_trend_pulse(ms(0), 100.0, 50.0, &mut w, wup);
-        compute_trend_pulse(ms(1), 100.0, 51.0, &mut w, wup);
-        let r3 = compute_trend_pulse(ms(2), 100.0, 52.0, &mut w, wup);
+        compute_trend(ms(0), 100.0, 50.0, &mut w, wup); // 0.50
+        compute_trend(ms(1), 100.0, 49.0, &mut w, wup); // 0.49
+        let r = compute_trend(ms(2), 100.0, 48.0, &mut w, wup); // 0.48
 
-        assert!(matches!(r3.validity, PulseValidity::Valid));
-        assert!(r3.trend_drop_bps <= 0.0);
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!(r.trend_drop_bps > 0.0);
+    }
+
+    #[test]
+    fn flat_or_rising_price_produces_zero_or_negative_trend() {
+        let mut w = RollingWindow::new();
+        let wup = warmup();
+
+        compute_trend(ms(0), 100.0, 50.0, &mut w, wup);
+        compute_trend(ms(1), 100.0, 51.0, &mut w, wup);
+        let r = compute_trend(ms(2), 100.0, 52.0, &mut w, wup);
+
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!(r.trend_drop_bps <= 0.0);
+    }
+
+    #[test]
+    fn uses_oldest_price_not_best_or_average() {
+        let mut w = RollingWindow::new();
+        let wup = warmup();
+
+        compute_trend(ms(0), 100.0, 50.0, &mut w, wup); // oldest = 0.50
+        compute_trend(ms(1), 100.0, 60.0, &mut w, wup); // spike
+        let r = compute_trend(ms(2), 100.0, 55.0, &mut w, wup); // still above oldest
+
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert!(r.trend_drop_bps < 0.0);
     }
 }

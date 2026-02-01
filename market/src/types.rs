@@ -1,4 +1,7 @@
-use super::pulse::{slippage::SlippagePulseResult, spread::SpreadPulseResult};
+use super::pulse::{
+    depth::DepthPulseResult, slippage::SlippagePulseResult, spread::SpreadPulseResult,
+    trend::TrendPulseResult,
+};
 use serde::Deserialize;
 
 #[derive(Debug, Clone)]
@@ -142,6 +145,6 @@ pub struct SubscriptionRequest {
 pub struct MarketMetrics {
     pub spread: SpreadPulseResult,
     pub slippage: SlippagePulseResult,
-    // pub trend: TrendPulseResult,
-    // pub depth: DepthPulseResult,
+    pub trend: TrendPulseResult,
+    pub depth: DepthPulseResult,
 }

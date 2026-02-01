@@ -8,9 +8,9 @@ use chrono::Utc;
 /// - You RECEIVE `ask_units` of `ask_asset`.
 ///
 /// Therefore:
-///     amount_in  = bid_units
-///     amount_out = ask_units
-///     price      = amount_out / amount_in
+///     bid_units  = bid_units
+///     ask_units = ask_units
+///     price      = ask_units / bid_units
 ///
 /// This does *not* depend on any "Bid/Ask side" concept.
 /// The direction is fully determined by how you subscribe to the RFQ stream.
@@ -19,14 +19,14 @@ pub struct NormalizedQuote {
     /// Timestamp when normalization occurred
     pub ts_ms: u64,
 
-    /// Execution price = amount_out / amount_in
+    /// Execution price = ask_units / bid_units
     pub price: f64,
 
     /// The amount of the asset *you give*
-    pub amount_in: f64,
+    pub bid_units: f64,
 
     /// The amount of the asset *you receive*
-    pub amount_out: f64,
+    pub ask_units: f64,
 }
 
 impl NormalizedQuote {
@@ -34,15 +34,15 @@ impl NormalizedQuote {
     ///
     /// Safety:
     /// - Non-numeric `bid_units` / `ask_units` become 0.0
-    /// - If `amount_in == 0`, price is set to 0.0
+    /// - If `bid_units == 0`, price is set to 0.0
     pub fn from_event(ev: &Quote) -> Self {
         let ts_ms = ev.quote_timestamp * 1000;
 
-        let amount_in = ev.bid_units.parse::<f64>().unwrap_or(0.0);
-        let amount_out = ev.ask_units.parse::<f64>().unwrap_or(0.0);
+        let bid_units = ev.bid_units.parse::<f64>().unwrap_or(0.0);
+        let ask_units = ev.ask_units.parse::<f64>().unwrap_or(0.0);
 
-        let price = if amount_in > 0.0 {
-            amount_out / amount_in
+        let price = if bid_units > 0.0 {
+            ask_units / bid_units
         } else {
             0.0
         };
@@ -50,8 +50,8 @@ impl NormalizedQuote {
         Self {
             ts_ms,
             price,
-            amount_in,
-            amount_out,
+            bid_units,
+            ask_units,
         }
     }
 }
@@ -104,8 +104,8 @@ mod tests {
         let q = mk_quote("100", "50");
         let nq = NormalizedQuote::from_event(&q);
 
-        assert_eq!(nq.amount_in, 100.0);
-        assert_eq!(nq.amount_out, 50.0);
+        assert_eq!(nq.bid_units, 100.0);
+        assert_eq!(nq.ask_units, 50.0);
         assert!((nq.price - 0.5).abs() < 1e-12);
     }
 
@@ -113,12 +113,12 @@ mod tests {
     // 2. ZERO HANDLING
     // -------------------------------------------------------------
     #[test]
-    fn zero_amount_in_gives_zero_price() {
+    fn zero_bid_units_gives_zero_price() {
         let q = mk_quote("0", "100");
         let nq = NormalizedQuote::from_event(&q);
 
-        assert_eq!(nq.amount_in, 0.0);
-        assert_eq!(nq.amount_out, 100.0);
+        assert_eq!(nq.bid_units, 0.0);
+        assert_eq!(nq.ask_units, 100.0);
         assert_eq!(nq.price, 0.0);
     }
 
@@ -130,8 +130,8 @@ mod tests {
         let q = mk_quote("abc", "xyz");
         let nq = NormalizedQuote::from_event(&q);
 
-        assert_eq!(nq.amount_in, 0.0);
-        assert_eq!(nq.amount_out, 0.0);
+        assert_eq!(nq.bid_units, 0.0);
+        assert_eq!(nq.ask_units, 0.0);
         assert_eq!(nq.price, 0.0);
     }
 
@@ -143,8 +143,8 @@ mod tests {
         let q = mk_quote("200", "80");
         let nq = NormalizedQuote::from_event(&q);
 
-        if nq.amount_in > 0.0 {
-            let expected = nq.amount_out / nq.amount_in;
+        if nq.bid_units > 0.0 {
+            let expected = nq.ask_units / nq.bid_units;
             assert!((nq.price - expected).abs() < 1e-12);
         }
     }
