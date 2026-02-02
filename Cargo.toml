@@ -2,7 +2,7 @@
 edition = "2024"
 
 [workspace]
-members = [ "executor","market", "scheduler", "session"]
+members = ["common", "executor","market", "scheduler", "session"]
 
 resolver = "2"
 
@@ -11,6 +11,7 @@ resolver = "2"
 market = { path = "market" }
 scheduler = { path = "scheduler" }
 session = { path = "session" }
+common = { path = "common" }
 
 # External
 async-trait = "0.1.89"
