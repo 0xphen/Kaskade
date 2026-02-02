@@ -1,7 +1,7 @@
 use std::time::Duration;
-use tracing::{Level, Span, field};
+use tracing::{Span, field};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{EnvFilter, fmt, registry::LookupSpan};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Clone, Debug)]
 pub struct TraceId(String);
@@ -42,7 +42,7 @@ pub fn init_tracing(json: bool) {
 pub fn root_span(name: &'static str, trace_id: &TraceId) -> Span {
     tracing::info_span!(
         "root",
-        name = %name, 
+        name = %name,
         trace_id = %trace_id.as_str(),
         pair_id = field::Empty,
         session_id = field::Empty
@@ -60,9 +60,9 @@ pub fn child_span(name: &'static str) -> Span {
 
 pub fn annotate_span(pair_id: &str, session_id: Option<&uuid::Uuid>) {
     let span = Span::current();
-    span.record("pair_id", &field::display(pair_id));
+    span.record("pair_id", field::display(pair_id));
     if let Some(sid) = session_id {
-        span.record("session_id", &field::display(sid));
+        span.record("session_id", field::display(sid));
     }
 }
 
