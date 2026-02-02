@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc ff61de76015eb3ca12ffecee627f6db83be0b2f82a6de112fcd39693b6c20a2c # shrinks to market_depth = 63443, min_chunk = 1, max_chunk = 100001, per_user = 101, hard_limit = 101, utilization = 0.8146065309705031, intents = [101]
