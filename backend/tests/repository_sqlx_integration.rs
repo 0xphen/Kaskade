@@ -157,7 +157,7 @@ async fn poison_rows_are_skipped() {
 async fn persist_fairness_numeric_overflow_error() {
     let pool = setup_db().await;
     let repo = SqlxSessionRepository::new(pool.clone());
-    
+
     let id = Uuid::new_v4();
 
     sqlx::query(
