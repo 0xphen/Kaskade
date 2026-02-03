@@ -264,7 +264,7 @@ async fn reserve_execution_happy_path() {
     };
 
     let batch = repo
-        .reserve_execution("TON/USDT", 12345, &[alloc.clone()])
+        .reserve_execution("TON/USDT", 12345, std::slice::from_ref(&alloc))
         .await
         .unwrap()
         .unwrap();

@@ -1,5 +1,5 @@
+use sqlx::AnyPool;
 use sqlx::any::AnyPoolOptions;
-use sqlx::{AnyPool, Row};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
