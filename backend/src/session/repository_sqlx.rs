@@ -405,6 +405,104 @@ WHERE batch_id=?;
         tx.commit().await?;
         Ok(())
     }
+
+    async fn recover_uncommitted(&self) -> anyhow::Result<()> {
+        let pool = &self.pool;
+
+        let batches = sqlx::query(r#"SELECT batch_id FROM batches WHERE status = 'RESERVED';"#)
+            .fetch_all(pool)
+            .await?;
+
+        for b in batches {
+            let batch_id: String = b.get("batch_id");
+
+            let items = sqlx::query(
+                r#"
+SELECT session_id, chunk_id, bid
+FROM batch_items
+WHERE batch_id = ? AND status = 'PENDING';
+"#,
+            )
+            .bind(batch_id.clone())
+            .fetch_all(pool)
+            .await?;
+
+            if items.is_empty() {
+                continue;
+            }
+
+            let mut tx = pool.begin().await?;
+
+            use std::collections::HashSet;
+            let mut touched_sessions = HashSet::new();
+
+            for it in items {
+                let session_id: String = it.get("session_id");
+                let chunk_id: String = it.get("chunk_id");
+                let bid: i64 = it.get("bid");
+
+                touched_sessions.insert(session_id.clone());
+
+                // Unwind in-flight safely
+                sqlx::query(
+                    r#"
+UPDATE sessions
+SET in_flight_bid    = CASE WHEN in_flight_bid >= ? THEN in_flight_bid - ? ELSE 0 END,
+    in_flight_chunks = CASE WHEN in_flight_chunks >= 1 THEN in_flight_chunks - 1 ELSE 0 END
+WHERE session_id = ?;
+"#,
+                )
+                .bind(bid)
+                .bind(bid)
+                .bind(&session_id)
+                .execute(&mut *tx)
+                .await?;
+
+                // Mark chunk skipped
+                sqlx::query(
+                    r#"
+UPDATE batch_items
+SET status='SKIPPED', error='recovered_uncommitted', tx_id=''
+WHERE batch_id = ? AND chunk_id = ?;
+"#,
+                )
+                .bind(&batch_id)
+                .bind(&chunk_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            // 🔑 Release exclusive lock
+            for sid in touched_sessions {
+                sqlx::query(
+                    r#"
+UPDATE sessions
+SET has_pending_batch = 0
+WHERE session_id = ?;
+"#,
+                )
+                .bind(sid)
+                .execute(&mut *tx)
+                .await?;
+            }
+
+            // Abort batch
+            sqlx::query(
+                r#"
+UPDATE batches
+SET status='ABORTED', reason='recovered_uncommitted'
+WHERE batch_id = ?;
+"#,
+            )
+            .bind(&batch_id)
+            .execute(&mut *tx)
+            .await?;
+
+            tx.commit().await?;
+        }
+
+        Ok(())
+    }
 }
 
 /* =========================

@@ -1,10 +1,27 @@
+//! Executor layer for condition-based swap execution.
+//!
+//! This module is responsible for **executing RESERVED batches** produced by the scheduler.
+//!
+//! Design principles:
+//! - **Fail-closed**: if market data or session state is invalid, execution is skipped.
+//! - **Exactly-once intent**: batches are already persisted as RESERVED before reaching this layer.
+//! - **Isolation by pair**: each trading pair executes sequentially in its own worker.
+//! - **Idempotent commit**: all state mutation happens in `commit_batch`.
+//!
+//! This module NEVER:
+//! - selects users
+//! - enforces fairness
+//! - mutates balances directly
+//!
+//! All durability is delegated to the DB via `commit_batch`.
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::{Mutex, mpsc};
-use tracing::{error, info, warn};
+use tracing::{Instrument, debug, error, info, info_span, warn};
 
 use crate::execution::commit_batch;
 use crate::execution::types::{
@@ -14,8 +31,10 @@ use crate::market_view::MarketViewStore;
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-/// Swap call input to the chain executor.
-/// `bid` and `chunk_id` must match the reserved batch_items in DB.
+/// Input to the chain executor.
+///
+/// This must exactly correspond to a RESERVED batch item in persistent storage.
+/// No execution should occur outside of this structure.
 #[derive(Clone, Debug)]
 pub struct SwapCall {
     pub pair_id: String,
@@ -24,43 +43,48 @@ pub struct SwapCall {
     pub chunk_id: uuid::Uuid,
 }
 
-/// Swap receipt returned by the chain executor.
-/// `tx_id` is persisted into `batch_items.tx_id` on success.
+/// Receipt returned by the chain executor.
+///
+/// `tx_id` is persisted on success and is used for idempotency / audit.
 #[derive(Clone, Debug)]
 pub struct SwapReceipt {
     pub tx_id: String,
 }
 
-/// Abstraction over your chain execution layer (TON / EMC).
-/// Contract errors should be mapped into stable `anyhow::Error` messages
-/// so `classify_error()` can normalize them into bounded reason strings.
+/// Abstraction over the on-chain execution layer.
+///
+/// This trait intentionally hides:
+/// - signing
+/// - RPC details
+/// - error formats
+///
+/// Errors must be normalized into stable strings by the implementation.
 #[async_trait]
 pub trait SwapExecutor: Send + Sync + 'static {
     async fn execute_swap(&self, call: SwapCall) -> anyhow::Result<SwapReceipt>;
 }
 
-/// Router that fans out reserved batches into per-pair worker queues.
+/// Routes RESERVED batches into per-pair worker queues.
 ///
-/// Why:
-/// - prevents one slow pair from blocking all other pairs
-/// - keeps execution ordering per pair
+/// Guarantees:
+/// - FIFO execution per pair
+/// - isolation between trading pairs
+/// - bounded memory via per-pair channel capacity
 ///
-/// Safety model:
-/// - scheduler already persisted the batch as RESERVED in DB
-/// - this router only delivers work; it never mutates session balances
-/// - if a worker crashes, RESERVED batches remain recoverable via DB recovery
+/// Failure handling:
+/// - if a worker dies, its sender is removed
+/// - RESERVED batches remain recoverable via DB recovery
 pub struct PairExecutorRouter<E: SwapExecutor> {
     store: Arc<SessionStore>,
     market_view: MarketViewStore,
     exec: Arc<E>,
     default_failure_cooldown_ms: u64,
 
-    /// Bounded per-pair backlog. Backpressure should be handled by scheduler policy
-    /// (e.g., do not reserve too aggressively if executor is behind).
+    /// Maximum backlog per trading pair.
+    /// This provides backpressure against over-reserving.
     per_pair_capacity: usize,
 
-    /// Cached channels for pair workers.
-    /// If a worker dies, its Sender is removed on send failure and recreated on next batch.
+    /// Active worker channels keyed by pair_id.
     pair_txs: Mutex<HashMap<String, Sender<ReservedBatch>>>,
 }
 
@@ -82,97 +106,97 @@ impl<E: SwapExecutor> PairExecutorRouter<E> {
         }
     }
 
-    /// Runs the router loop. Consumes `ExecutionEvent`s and forwards RESERVED batches
-    /// into a per-pair worker queue.
+    /// Main router loop.
     ///
-    /// Failure behavior:
-    /// - if forwarding fails (worker died), the sender is removed so the next batch
-    ///   recreates the worker
-    /// - the batch itself remains RESERVED in DB and must be handled by recovery
+    /// This function never mutates session state and never executes swaps.
+    /// Its sole responsibility is **work delivery**.
     pub async fn run(self: Arc<Self>, mut rx: Receiver<ExecutionEvent>) {
+        info!(
+            component = "router",
+            event = "startup",
+            "Execution router started"
+        );
+
         while let Some(ev) = rx.recv().await {
             match ev {
                 ExecutionEvent::Reserved(batch) => {
                     let pair_id = batch.pair_id.clone();
+                    let batch_id = batch.batch_id;
 
                     let tx = match self.get_or_spawn_worker(&pair_id).await {
                         Ok(tx) => tx,
                         Err(e) => {
                             error!(
-                                pair_id = %pair_id,
+                                component = "router",
+                                event = "worker_spawn_failure",
+                                %pair_id,
+                                %batch_id,
                                 error = ?e,
-                                "router: failed to get/spawn worker"
+                                "Failed to acquire worker; batch left for recovery"
                             );
                             continue;
                         }
                     };
 
-                    if tx.send(batch).await.is_err() {
-                        // Worker died; remove cached sender so the next batch recreates it.
-                        warn!(
-                            pair_id = %pair_id,
-                            "router: worker channel closed; removing sender"
-                        );
+                    debug!(%pair_id, %batch_id, "Routing batch to worker");
 
-                        let mut g = self.pair_txs.lock().await;
-                        g.remove(&pair_id);
+                    if let Err(_) = tx.send(batch).await {
+                        // Worker died; remove sender so it can be recreated.
+                        warn!(
+                            component = "router",
+                            event = "worker_send_error",
+                            %pair_id,
+                            "Worker channel closed; purging sender"
+                        );
+                        self.pair_txs.lock().await.remove(&pair_id);
                     }
                 }
             }
         }
 
-        warn!("router: input channel closed; shutting down");
+        warn!(
+            component = "router",
+            event = "shutdown",
+            "Router channel closed"
+        );
     }
 
+    /// Returns an existing worker sender or spawns a new worker for this pair.
     async fn get_or_spawn_worker(&self, pair_id: &str) -> anyhow::Result<Sender<ReservedBatch>> {
-        // Fast path
-        {
-            let g = self.pair_txs.lock().await;
-            if let Some(tx) = g.get(pair_id) {
-                return Ok(tx.clone());
-            }
+        if let Some(tx) = self.pair_txs.lock().await.get(pair_id) {
+            return Ok(tx.clone());
         }
 
-        // Slow path
-        let (tx, rx) = mpsc::channel::<ReservedBatch>(self.per_pair_capacity);
+        let (tx, rx) = mpsc::channel(self.per_pair_capacity);
 
-        {
-            // Double-check to handle races (two batches for same pair concurrently).
-            let mut g = self.pair_txs.lock().await;
-            if let Some(existing) = g.get(pair_id) {
-                return Ok(existing.clone());
-            }
-            g.insert(pair_id.to_string(), tx.clone());
-        }
+        self.pair_txs
+            .lock()
+            .await
+            .entry(pair_id.to_string())
+            .or_insert_with(|| {
+                let worker = ExecutorWorker::new(
+                    self.store.clone(),
+                    self.market_view.clone(),
+                    self.exec.clone(),
+                    self.default_failure_cooldown_ms,
+                    pair_id.to_string(),
+                );
 
-        let worker = ExecutorWorker::new(
-            self.store.clone(),
-            self.market_view.clone(),
-            self.exec.clone(),
-            self.default_failure_cooldown_ms,
-            pair_id.to_string(),
-        );
+                tokio::spawn(async move {
+                    worker.run(rx).await;
+                });
 
-        tokio::spawn(async move {
-            worker.run(rx).await;
-        });
+                tx.clone()
+            });
 
-        info!(pair_id = %pair_id, "router: spawned pair worker");
+        info!(component = "router", %pair_id, "Spawned new pair worker");
         Ok(tx)
     }
 }
 
-/// Executes batches for a single pair, sequentially.
+/// Executes batches for a single trading pair sequentially.
 ///
-/// Responsibilities:
-/// - Gate B checks using latest market snapshot right before each chunk
-/// - invokes chain executor per chunk
-/// - records per-chunk results
-/// - commits via `commit_batch()` (DB source of truth, idempotent)
-///
-/// Invariants expected from upstream:
-/// - `ReservedBatch` corresponds to `batches + batch_items` rows in DB
-/// - `commit_batch` must unwind in-flight and decrement remaining only on success
+/// This is the **only place** where swaps are executed.
 pub struct ExecutorWorker<E: SwapExecutor> {
     store: Arc<SessionStore>,
     market_view: MarketViewStore,
@@ -198,38 +222,42 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
         }
     }
 
-    /// Worker loop: executes batches in FIFO order for this pair.
+    /// Worker loop.
+    ///
+    /// Executes batches sequentially and never panics.
     pub async fn run(self, mut rx: Receiver<ReservedBatch>) {
+        info!(component = "worker", %self.pair_id, event = "startup");
+
         while let Some(batch) = rx.recv().await {
-            if let Err(e) = self.execute_batch(batch).await {
-                error!(
-                    pair_id = %self.pair_id,
-                    error = ?e,
-                    "worker: execute_batch failed"
-                );
+            let span = info_span!(
+                "batch_execution",
+                pair_id = %self.pair_id,
+                batch_id = %batch.batch_id
+            );
+
+            if let Err(e) = self.execute_batch(batch).instrument(span).await {
+                error!(error = ?e, "Batch execution failed");
             }
         }
 
-        warn!(pair_id = %self.pair_id, "worker: channel closed; exiting");
+        warn!(component = "worker", %self.pair_id, "Worker exiting");
     }
 
+    /// Executes a single RESERVED batch.
+    ///
+    /// Invariants:
+    /// - no state mutation before `commit_batch`
+    /// - no retries inside a batch
+    /// - stop on first failure per user
     async fn execute_batch(&self, batch: ReservedBatch) -> anyhow::Result<()> {
-        // Gate B snapshot for this batch. If missing -> fail closed (skip everything).
         let market = self.market_view.get(&batch.pair_id).await;
 
-        let mut results: Vec<UserResult> = Vec::with_capacity(batch.users.len());
+        let mut results = Vec::with_capacity(batch.users.len());
 
         for u in &batch.users {
-            // Load session via cache then DB fallback
             let session = match self.load_session(u.session_id).await {
                 Ok(s) => s,
-                Err(e) => {
-                    warn!(
-                        session_id = %u.session_id,
-                        error = ?e,
-                        "worker: session load failed; skipping user"
-                    );
-
+                Err(_) => {
                     results.push(UserResult {
                         session_id: u.session_id,
                         chunk_results: u
@@ -266,12 +294,9 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
                 continue;
             }
 
-            let mut chunk_results: Vec<ChunkResult> = Vec::with_capacity(u.chunks.len());
-            let mut any_failed = false;
+            let mut chunk_results = Vec::new();
+            let mut failed = false;
 
-            // Policy:
-            // - stop on first constraint failure (Gate B) to avoid executing under worse conditions
-            // - stop on first execution failure to avoid repeated chain spam
             for ch in &u.chunks {
                 if !gate_b_ok(&session, market.as_ref()) {
                     chunk_results.push(ChunkResult {
@@ -300,12 +325,12 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
                         });
                     }
                     Err(e) => {
-                        let reason = classify_error(&e);
-                        any_failed = true;
-
+                        failed = true;
                         chunk_results.push(ChunkResult {
                             chunk_id: ch.chunk_id,
-                            status: ChunkStatus::Failed { reason },
+                            status: ChunkStatus::Failed {
+                                reason: classify_error(&e),
+                            },
                         });
                         break;
                     }
@@ -315,22 +340,12 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
             results.push(UserResult {
                 session_id: u.session_id,
                 chunk_results,
-                cooldown_ms: any_failed.then_some(self.default_failure_cooldown_ms),
+                cooldown_ms: failed.then_some(self.default_failure_cooldown_ms),
             });
         }
 
-        // Single DB commit point:
-        // - idempotent per chunk (only processes PENDING rows)
-        // - unwinds in-flight always
-        // - decrements remaining only on success
-        // - applies cooldown
+        // Single, idempotent DB mutation point
         commit_batch(self.store.as_ref(), &batch, &results).await?;
-
-        info!(
-            pair_id = %batch.pair_id,
-            batch_id = %batch.batch_id,
-            "worker: batch committed"
-        );
         Ok(())
     }
 
@@ -338,15 +353,14 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
         if let Some(s) = self.store.get_cached(&session_id) {
             return Ok(s);
         }
-
         let s = self.store.load_by_id(&session_id).await?;
         self.store.upsert_cache(s.clone());
         Ok(s)
     }
 }
 
-/// Gate B enforces user constraints right before execution.
-/// Missing market snapshot fails closed.
+/// Gate B: final constraint enforcement right before execution.
+/// Missing market data fails closed.
 fn gate_b_ok(
     session: &Session,
     market: Option<&crate::market_view::types::MarketMetricsView>,
@@ -361,14 +375,9 @@ fn gate_b_ok(
         && m.slippage_bps <= session.intent.constraints.max_slippage_bps
 }
 
-/// Normalizes errors into stable bounded reason strings.
-///
-/// TODO:
-/// prefer structured error codes (enum / numeric code) over string contains.
-/// This function is the compatibility layer until your executor returns structured errors.
+/// Normalizes executor errors into stable bounded strings.
 fn classify_error(e: &anyhow::Error) -> String {
-    let s = format!("{e}");
-
+    let s = e.to_string();
     if s.contains("MarketNotOpen") {
         return "MarketNotOpen".into();
     }
@@ -403,10 +412,6 @@ mod tests {
     use crate::session::model::{Session, SessionIntent, SessionState, UserConstraints};
     use crate::session::repository::SessionRepository;
     use crate::session::store::SessionStore;
-
-    // -------------------------------------------------------------------------
-    // Test helpers
-    // -------------------------------------------------------------------------
 
     /// Create a cache-only SessionStore with a single session.
     ///
@@ -447,6 +452,10 @@ mod tests {
                 _: &ReservedBatch,
                 _: &[UserResult],
             ) -> anyhow::Result<()> {
+                Ok(())
+            }
+
+            async fn recover_uncommitted(&self) -> anyhow::Result<()> {
                 Ok(())
             }
         }
@@ -501,10 +510,6 @@ mod tests {
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Mock executor
-    // -------------------------------------------------------------------------
-
     struct MockExecutor {
         calls: AtomicUsize,
         fail_on_call: Option<usize>,
@@ -523,10 +528,6 @@ mod tests {
             }
         }
     }
-
-    // -------------------------------------------------------------------------
-    // Tests
-    // -------------------------------------------------------------------------
 
     #[tokio::test]
     async fn gate_b_fails_closed_without_market() {
@@ -728,6 +729,9 @@ mod tests {
                 _: &[UserResult],
             ) -> anyhow::Result<()> {
                 Err(anyhow::anyhow!("DB down"))
+            }
+            async fn recover_uncommitted(&self) -> anyhow::Result<()> {
+                Ok(())
             }
         }
 

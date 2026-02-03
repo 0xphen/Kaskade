@@ -830,3 +830,126 @@ async fn test_commit_cooldown_idempotency() {
         "Idempotent commit should not alter cooldown"
     );
 }
+
+#[tokio::test]
+async fn recover_uncommitted_aborts_and_unwinds_state() {
+    let pool = setup_db().await;
+    let repo = SqlxSessionRepository::new(pool.clone());
+
+    let session_id = Uuid::new_v4();
+    let batch_id = Uuid::new_v4();
+    let chunk_id = Uuid::new_v4();
+
+    // Seed a session with in-flight state and pending batch
+    sqlx::query(
+        r#"
+INSERT INTO sessions VALUES
+(?, 'TON/USDT', 1,
+ 50, 100, 75,
+ 100, 1000,
+ 1000, 10,
+ 500, 1,
+ 0, 100,
+ 0, 0,
+ 1                  -- has_pending_batch = true
+);
+"#,
+    )
+    .bind(session_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Seed a RESERVED batch
+    sqlx::query(
+        r#"
+INSERT INTO batches (batch_id, pair_id, created_ms, status, reason)
+VALUES (?, 'TON/USDT', 0, 'RESERVED', '');
+"#,
+    )
+    .bind(batch_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Seed a PENDING chunk
+    sqlx::query(
+        r#"
+INSERT INTO batch_items
+(chunk_id, batch_id, session_id, bid, status, tx_id, error)
+VALUES (?, ?, ?, 500, 'PENDING', '', '');
+"#,
+    )
+    .bind(chunk_id.to_string())
+    .bind(batch_id.to_string())
+    .bind(session_id.to_string())
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // run recovery
+    repo.recover_uncommitted().await.unwrap();
+
+    // Assert session state unwound
+    let row = sqlx::query(
+        r#"
+SELECT in_flight_bid, in_flight_chunks, 
+CAST(has_pending_batch AS INTEGER) AS has_pending_batch,
+remaining_bid
+FROM sessions WHERE session_id = ?;
+"#,
+    )
+    .bind(session_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        row.get::<i64, _>("in_flight_bid"),
+        0,
+        "in_flight_bid must be unwound"
+    );
+    assert_eq!(
+        row.get::<i64, _>("in_flight_chunks"),
+        0,
+        "in_flight_chunks must be unwound"
+    );
+    assert_eq!(
+        row.get::<i64, _>("has_pending_batch"),
+        0,
+        "has_pending_batch must be released"
+    );
+    assert_eq!(
+        row.get::<i64, _>("remaining_bid"),
+        1000,
+        "remaining_bid must not be consumed during recovery"
+    );
+
+    // Assert chunk marked skipped
+    let chunk_status: String = sqlx::query_scalar(
+        r#"
+SELECT status FROM batch_items WHERE chunk_id = ?;
+"#,
+    )
+    .bind(chunk_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(chunk_status, "SKIPPED");
+
+    let batch_status: String = sqlx::query_scalar(
+        r#"
+SELECT status FROM batches WHERE batch_id = ?;
+"#,
+    )
+    .bind(batch_id.to_string())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(batch_status, "ABORTED");
+
+    // Idempotency: running recovery again must be safe 
+    repo.recover_uncommitted().await.unwrap();
+}

@@ -29,4 +29,6 @@ pub trait SessionRepository: Send + Sync {
     /// Finalizes a RESERVED batch based on executor results.
     /// Must be atomic and idempotent.
     async fn commit_batch(&self, batch: &ReservedBatch, results: &[UserResult]) -> Result<()>;
+
+    async fn recover_uncommitted(&self) -> anyhow::Result<()>;
 }

@@ -189,6 +189,10 @@ mod tests {
             Ok(())
         }
 
+        async fn recover_uncommitted(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
         async fn reserve_execution(
             &self,
             pair_id: &str,
@@ -282,6 +286,9 @@ mod tests {
                 Ok(None)
             }
             async fn persist_fairness(&self, _: &Uuid, _: i128, _: u64) -> anyhow::Result<()> {
+                Ok(())
+            }
+            async fn recover_uncommitted(&self) -> anyhow::Result<()> {
                 Ok(())
             }
             async fn reserve_execution(
