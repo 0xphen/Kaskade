@@ -44,3 +44,18 @@ pub struct UserResult {
     pub chunk_results: Vec<ChunkResult>,
     pub cooldown_ms: Option<u64>,
 }
+
+/// Swap call input.
+#[derive(Clone, Debug)]
+pub struct SwapCall {
+    pub pair_id: String,
+    pub session_id: uuid::Uuid,
+    pub bid: u128,
+    pub chunk_id: uuid::Uuid,
+}
+
+/// Swap receipt output (what you store as tx_id).
+#[derive(Clone, Debug)]
+pub struct SwapReceipt {
+    pub tx_id: String,
+}
