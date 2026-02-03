@@ -16,7 +16,7 @@ use crate::planner::types::{PlannedAllocation, SizingPolicy, UserIntent};
 /// - Order of `intents` matters (first-fit into the remaining global budget).
 #[instrument(
     target = "planner",
-    skip(intents), 
+    skip(intents),
     fields(
         intent_count = intents.len(),
         total_bid_allocated = field::Empty,

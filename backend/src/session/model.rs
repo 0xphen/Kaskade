@@ -1,3 +1,4 @@
+use tracing::debug;
 use uuid::Uuid;
 
 /// Per-session execution constraints (Gate A + Gate B).
@@ -62,14 +63,20 @@ pub struct Session {
 
 impl Session {
     pub fn accumulate_credit(&mut self) {
-        let max_deficit = (self.intent.preferred_chunk_bid * 2) as i128;
+        // Domain-specific cap to prevent "burstiness" after long inactivity
+        let max_deficit = (self.intent.preferred_chunk_bid as i128).saturating_mul(2);
 
         let next = self
             .state
             .deficit
             .saturating_add(self.state.quantum as i128);
-
         self.state.deficit = next.min(max_deficit);
+
+        debug!(
+            session_id = %self.session_id,
+            deficit = self.state.deficit,
+            "credit accumulated"
+        );
     }
 
     /// Remaining volume that is not already reserved in-flight.

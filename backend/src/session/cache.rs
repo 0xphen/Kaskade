@@ -1,6 +1,6 @@
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
-use tracing::{debug, field, info, instrument, warn};
+use tracing::{debug, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::session::model::Session;
@@ -80,7 +80,7 @@ impl SessionCache {
     /// Insert or update a session and ensure it appears exactly once in the RR ring.
     /// If inserting a new session would exceed capacity, evicts a cold entry first.
     #[instrument(
-        skip(self, s), 
+        skip(self, s),
         target = "cache", 
         fields(session_id = %s.session_id, pair_id = %s.pair_id)
     )]
