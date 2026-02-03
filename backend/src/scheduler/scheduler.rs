@@ -18,11 +18,10 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tokio::sync::mpsc::Sender;
-use tracing::{debug, error, field, info, instrument, warn};
+use tracing::{debug, field, info, instrument, warn};
 use uuid::Uuid;
 
 use crate::execution::reserve_execution;
@@ -200,11 +199,11 @@ impl Scheduler {
     ///
     /// Durability:
     /// - DRR deficit is persisted so restarts/cache evictions do not reset fairness.
-    #[instrument(skip(self, market), target = "scheduler")]
+    #[instrument(skip(self, _market), target = "scheduler")]
     async fn pick_intents(
         &self,
         pair_id: &str,
-        market: &MarketMetricsView,
+        _market: &MarketMetricsView,
         now_ms: u64,
     ) -> anyhow::Result<Vec<PlannerUserIntent>> {
         let mut out = Vec::new();
