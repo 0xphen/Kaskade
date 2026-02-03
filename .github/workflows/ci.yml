@@ -43,11 +43,9 @@ jobs:
       - name: Verify SQLx offline data
         run: |
           if [ ! -d ".sqlx" ]; then
-            echo "❌ ERROR: .sqlx directory missing. CI cannot compile in offline mode."
-            echo "Please run 'cargo sqlx prepare --workspace' in the root folder locally and commit the results."
+            echo "❌ ERROR: .sqlx directory missing at root."
             exit 1
           fi
-          echo "SQLx offline metadata found ✅"
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
