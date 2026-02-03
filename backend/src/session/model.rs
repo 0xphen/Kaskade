@@ -1,4 +1,3 @@
-use tracing::debug;
 use uuid::Uuid;
 
 /// Per-session execution constraints (Gate A + Gate B).
@@ -49,6 +48,9 @@ pub struct SessionState {
     pub deficit: i128,
     /// Last time this session was served (observability / optional aging).
     pub last_served_ms: u64,
+
+    /// True if a batch is RESERVED but not yet committed / aborted.
+    pub has_pending_batch: bool,
 }
 
 /// A single user automation session for a specific trading pair.
@@ -62,23 +64,6 @@ pub struct Session {
 }
 
 impl Session {
-    pub fn accumulate_credit(&mut self) {
-        // Domain-specific cap to prevent "burstiness" after long inactivity
-        let max_deficit = (self.intent.preferred_chunk_bid as i128).saturating_mul(2);
-
-        let next = self
-            .state
-            .deficit
-            .saturating_add(self.state.quantum as i128);
-        self.state.deficit = next.min(max_deficit);
-
-        debug!(
-            session_id = %self.session_id,
-            deficit = self.state.deficit,
-            "credit accumulated"
-        );
-    }
-
     /// Remaining volume that is not already reserved in-flight.
     pub fn available_bid(&self) -> u128 {
         self.state
@@ -143,6 +128,7 @@ mod tests {
                 quantum: 100_000,
                 deficit: 0,
                 last_served_ms: 0,
+                has_pending_batch: false,
             },
         }
     }
@@ -325,36 +311,5 @@ mod tests {
         let s = mk_session(500, 0, 10, 0, 0, true);
         // They are still "eligible" for the scheduler to try and squeeze out a final trade.
         assert!(s.is_eligible(100));
-    }
-
-    #[test]
-    fn test_drr_deficit_cap_prevents_leak() {
-        let mut s = mk_session(1_000_000, 0, 10, 0, 0, true);
-        s.intent.preferred_chunk_bid = 50_000; // Cap will be 100,000
-        s.state.quantum = 20_000;
-
-        // Simulate 1,000 ticks
-        for _ in 0..1000 {
-            s.accumulate_credit();
-        }
-
-        // The method's internal logic: (deficit + 20k).min(100k)
-        assert_eq!(
-            s.state.deficit, 100_000,
-            "Deficit leaked beyond the safety cap!"
-        );
-    }
-
-    #[test]
-    fn test_drr_math_overflow_safety() {
-        let mut s = mk_session(u128::MAX, 0, 10, 0, 0, true);
-
-        // Manual setup for extreme case
-        s.state.deficit = i128::MAX - 100;
-        s.state.quantum = 200;
-
-        s.accumulate_credit();
-
-        assert_eq!(s.state.deficit, i128::MAX);
     }
 }

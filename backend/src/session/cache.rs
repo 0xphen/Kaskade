@@ -193,6 +193,7 @@ mod tests {
                 in_flight_chunks: 0,
                 cooldown_until_ms: 0,
                 quantum: 100_000,
+                has_pending_batch: false,
                 deficit,
                 last_served_ms,
             },

@@ -7,26 +7,21 @@ pub async fn migrate(pool: &AnyPool) -> anyhow::Result<()> {
 CREATE TABLE IF NOT EXISTS sessions (
   session_id TEXT PRIMARY KEY,
   pair_id TEXT NOT NULL,
-  active BOOLEAN NOT NULL,
-
-  max_spread_bps DOUBLE PRECISION NOT NULL,
-  max_trend_drop_bps DOUBLE PRECISION NOT NULL,
-  max_slippage_bps DOUBLE PRECISION NOT NULL,
-
+  active INTEGER NOT NULL CHECK (active IN (0,1)),
+  max_spread_bps REAL NOT NULL,
+  max_trend_drop_bps REAL NOT NULL,
+  max_slippage_bps REAL NOT NULL,
   preferred_chunk_bid BIGINT NOT NULL,
   max_bid_per_tick BIGINT NOT NULL,
-
   remaining_bid BIGINT NOT NULL,
-  remaining_chunks INTEGER NOT NULL,
-
+  remaining_chunks BIGINT NOT NULL,
   in_flight_bid BIGINT NOT NULL,
-  in_flight_chunks INTEGER NOT NULL,
-
+  in_flight_chunks BIGINT NOT NULL,
   cooldown_until_ms BIGINT NOT NULL,
-
   quantum BIGINT NOT NULL,
   deficit BIGINT NOT NULL,
-  last_served_ms BIGINT NOT NULL
+  last_served_ms BIGINT NOT NULL,
+  has_pending_batch INTEGER NOT NULL DEFAULT 0 CHECK (has_pending_batch IN (0,1))
 );
 "#,
     )
