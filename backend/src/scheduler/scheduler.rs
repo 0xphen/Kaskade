@@ -278,7 +278,7 @@ impl Scheduler {
 ///
 /// This gate is intentionally conservative: the executor re-checks constraints
 /// (Gate B) immediately before each chunk is executed.
-fn constraints_ok(s: &Session, m: &MarketMetricsView) -> bool {
+pub fn constraints_ok(s: &Session, m: &MarketMetricsView) -> bool {
     m.spread_bps <= s.intent.constraints.max_spread_bps
         && m.trend_drop_bps <= s.intent.constraints.max_trend_drop_bps
         && m.slippage_bps <= s.intent.constraints.max_slippage_bps

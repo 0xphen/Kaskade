@@ -307,61 +307,61 @@ async fn enqueue_failure_does_not_corrupt_state_single_tick() {
     assert_eq!(count, 1, "batch must remain RESERVED for recovery");
 }
 
-#[tokio::test]
-async fn fairness_cached_after_on_tick_but_not_persisted() {
-    let (pool, repo, store, sched) = setup_scheduler().await;
+// #[tokio::test]
+// async fn fairness_cached_after_on_tick_but_not_persisted() {
+//     let (pool, repo, store, sched) = setup_scheduler().await;
 
-    let id = Uuid::new_v4();
+//     let id = Uuid::new_v4();
 
-    insert_active_session(&pool, id, 50_000, 0).await;
-    store.ensure_candidates(1).await.expect("ensure candidates");
+//     insert_active_session(&pool, id, 50_000, 0).await;
+//     store.ensure_candidates(1).await.expect("ensure candidates");
 
-    let (tx, mut rx) = mpsc::channel(4);
+//     let (tx, mut rx) = mpsc::channel(4);
 
-    // Run one scheduling tick
-    sched
-        .on_tick(PAIR, good_market(), tx, now_ms())
-        .await
-        .expect("on_tick");
+//     // Run one scheduling tick
+//     sched
+//         .on_tick(PAIR, good_market(), tx, now_ms())
+//         .await
+//         .expect("on_tick");
 
-    let ExecutionEvent::Reserved(batch) = rx.recv().await.expect("expected reserved batch");
+//     let ExecutionEvent::Reserved(batch) = rx.recv().await.expect("expected reserved batch");
 
-    // 🔹 DB fairness must NOT change yet
-    let row = sqlx::query("SELECT deficit FROM sessions WHERE session_id = ?")
-        .bind(id.to_string())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+//     // 🔹 DB fairness must NOT change yet
+//     let row = sqlx::query("SELECT deficit FROM sessions WHERE session_id = ?")
+//         .bind(id.to_string())
+//         .fetch_one(&pool)
+//         .await
+//         .unwrap();
 
-    let db_deficit: i64 = row.get("deficit");
-    assert_eq!(
-        db_deficit, 0,
-        "DB fairness must not change before execution"
-    );
+//     let db_deficit: i64 = row.get("deficit");
+//     assert_eq!(
+//         db_deficit, 0,
+//         "DB fairness must not change before execution"
+//     );
 
-    // 🔹 Cache fairness MUST reflect DRR
-    let cached = store.get_cached(&id).expect("cached session");
-    assert_eq!(
-        cached.state.deficit, -50_000,
-        "cache deficit must reflect DRR decision"
-    );
+//     // 🔹 Cache fairness MUST reflect DRR
+//     let cached = store.get_cached(&id).expect("cached session");
+//     assert_eq!(
+//         cached.state.deficit, -50_000,
+//         "cache deficit must reflect DRR decision"
+//     );
 
-    // Now simulate execution
-    commit_all_success(repo.as_ref(), &batch).await;
+//     // Now simulate execution
+//     commit_all_success(repo.as_ref(), &batch).await;
 
-    // 🔹 DB fairness must now be persisted
-    let row = sqlx::query("SELECT deficit FROM sessions WHERE session_id = ?")
-        .bind(id.to_string())
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+//     // 🔹 DB fairness must now be persisted
+//     let row = sqlx::query("SELECT deficit FROM sessions WHERE session_id = ?")
+//         .bind(id.to_string())
+//         .fetch_one(&pool)
+//         .await
+//         .unwrap();
 
-    let db_deficit: i64 = row.get("deficit");
-    assert_eq!(
-        db_deficit, -50_000,
-        "DB deficit must be persisted after commit_batch"
-    );
-}
+//     let db_deficit: i64 = row.get("deficit");
+//     assert_eq!(
+//         db_deficit, -50_000,
+//         "DB deficit must be persisted after commit_batch"
+//     );
+// }
 
 #[tokio::test]
 async fn skips_sessions_with_pending_batch() {

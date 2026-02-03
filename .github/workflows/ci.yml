@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [ "mvp" ]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  SQLX_OFFLINE: "true"
+
+jobs:
+  test:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsqlite3-dev
+
+      - name: Cache cargo + target
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Verify SQLx offline data
+        run: |
+          if [ ! -d ".sqlx" ]; then
+            echo "❌ ERROR: .sqlx directory missing. CI cannot compile in offline mode."
+            echo "Run 'cargo sqlx prepare --workspace' locally and commit the .sqlx folder."
+            exit 1
+          fi
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --all-features --all-targets

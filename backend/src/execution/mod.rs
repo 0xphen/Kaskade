@@ -1,3 +1,4 @@
+pub mod executor;
 pub mod types;
 
 use crate::execution::types::ReservedBatch;

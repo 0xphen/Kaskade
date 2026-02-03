@@ -1,3 +1,7 @@
 /target
 .DS_Store
 Cargo.lock
+
+*.db
+*.db-shm
+*.db-wal
