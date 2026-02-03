@@ -2,12 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [ "mvp" ]
+    branches: [ "mvp", "main" ]
   pull_request:
+    branches: [ "mvp", "main" ]
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -43,9 +44,10 @@ jobs:
         run: |
           if [ ! -d ".sqlx" ]; then
             echo "❌ ERROR: .sqlx directory missing. CI cannot compile in offline mode."
-            echo "Run 'cargo sqlx prepare --workspace' locally and commit the .sqlx folder."
+            echo "Please run 'cargo sqlx prepare --workspace' in the root folder locally and commit the results."
             exit 1
           fi
+          echo "SQLx offline metadata found ✅"
 
       - name: cargo fmt
         run: cargo fmt --all -- --check
