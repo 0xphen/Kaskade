@@ -143,6 +143,7 @@ pub struct SubscriptionRequest {
 
 #[derive(Clone, Default, Debug)]
 pub struct MarketMetrics {
+    pub ts_ms: u64,
     pub spread: SpreadPulseResult,
     pub slippage: SlippagePulseResult,
     pub trend: TrendPulseResult,

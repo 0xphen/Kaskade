@@ -1,49 +1,26 @@
-//! MarketManager
-//!
-//! This module manages live market state for RFQ-based pairs.
-//! Responsibilities:
-//!   • Maintain latest normalized market metrics for each trading pair
-//!   • Spawn per-pair RFQ WebSocket streams
-//!   • Normalize incoming Omniston quote events
-//!   • Compute spread pulse via rolling window
-//!   • Broadcast market snapshots to all subscribed components
-//!
-//! MarketManager is designed as an Arc-managed async service, ensuring that
-//! long-lived tasks may safely capture `self` without lifetime issues.
-
 use std::collections::HashMap;
 use std::sync::Arc;
-
 use tokio::sync::{
     Mutex,
     mpsc::{self, Receiver, Sender},
 };
+// Production logging imports
+use tracing::{Instrument, debug, error, info, instrument, warn};
 
 use super::{
     omniston::{OmnistonApi, normalized_quote::NormalizedQuote},
     types::{MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
 };
-
 use crate::market::pulse::{PairPulseState, Pulse, PulseValidity, input::*};
 
-/// MarketManager orchestrates RFQ streaming, quote normalization,
-/// rolling-window metric computation, and snapshot broadcasting.
 pub struct MarketManager<C> {
-    /// Latest market metrics indexed by Pair
     pub states: Arc<Mutex<HashMap<Pair, MarketMetrics>>>,
-
-    /// Omniston WebSocket client implementation
     pub omniston_ws_client: Arc<C>,
-
-    /// Component subscribers interested in receiving market snapshots
     pub subscribers: Arc<Mutex<HashMap<Pair, Vec<Sender<MarketMetrics>>>>>,
-
-    /// Per-pair pulse engines (spread, trend, depth)
     pub pulses: Arc<Mutex<HashMap<Pair, PairPulseState>>>,
 }
 
 impl<C: OmnistonApi> MarketManager<C> {
-    /// Create a new MarketManager wrapped in Arc<Self> for multi-task ownership.
     pub fn new(omniston_ws_client: Arc<C>) -> Arc<Self> {
         Arc::new(Self {
             omniston_ws_client,
@@ -53,108 +30,106 @@ impl<C: OmnistonApi> MarketManager<C> {
         })
     }
 
-    /// Subscribe a component to a given trading pair.
-    ///
-    /// Responsibilities:
-    ///   • Store subscriber channel
-    ///   • Start RFQ WebSocket for the pair if not already started
-    ///   • Spawn event processing task for the pair
+    #[instrument(skip(self, request), fields(pair = %request.pair.id()))]
     pub async fn subscribe(self: Arc<Self>, request: SubscriptionRequest) {
         let SubscriptionRequest {
             pair,
             amount,
             sender_ch,
         } = request;
-
         let mut map = self.subscribers.lock().await;
 
-        // Only start a stream if this is the first subscriber for this pair
         if map.get(&pair).is_none() {
             let (bid_asset, ask_asset) = Self::fetch_pair_addresses(&pair);
             map.insert(pair.clone(), vec![sender_ch]);
 
-            println!("🔌 Subscribed to market feed for pair {}", pair.id());
+            info!("Initializing new market feed for pair");
 
             let req = RfqRequest {
                 bid_asset,
                 ask_asset,
                 amount,
             };
-
-            // RFQ WebSocket channel
             let (tx, rx) = mpsc::channel(50);
             let ws_client = Arc::clone(&self.omniston_ws_client);
 
-            // Spawn RFQ stream task
-            let pair_id_clone = pair.id();
-            tokio::spawn(async move {
-                let _ = ws_client.request_for_quote_stream(req, tx).await;
-                println!("🟢 RFQ WebSocket started for {}", pair_id_clone);
-            });
+            // Spawn RFQ stream task with its own instrumented span
+            let pair_id = pair.id();
+            let stream_span = tracing::info_span!("rfq_stream_task", %pair_id);
+            tokio::spawn(
+                async move {
+                    info!("Starting RFQ WebSocket stream");
+                    if let Err(e) = ws_client.request_for_quote_stream(req, tx).await {
+                        error!(error = ?e, "RFQ WebSocket stream crashed");
+                    }
+                }
+                .instrument(stream_span),
+            );
 
             // Spawn event processing task
             let mm = Arc::clone(&self);
             let pair_clone = pair.clone();
-            tokio::spawn(async move {
-                println!("📥 Receiver task running for {}", pair_clone.id());
-                mm.process_event_stream(rx, pair_clone).await;
-            });
+            let processor_span =
+                tracing::info_span!("event_processor_task", pair = %pair_clone.id());
+            tokio::spawn(
+                async move {
+                    debug!("Receiver task running for events");
+                    mm.process_event_stream(rx, pair_clone).await;
+                }
+                .instrument(processor_span),
+            );
         } else {
-            // Pair already has an active stream, simply add this subscriber
             map.entry(pair.clone()).or_default().push(sender_ch);
-            println!("➕ Added subscriber for existing pair stream {}", pair.id());
+            debug!("Added new subscriber to existing pair stream");
         }
     }
 
-    /// Process incoming events for a specific trading pair.
-    ///
-    /// Responsibilities:
-    ///   • Normalize Omniston quotes
-    ///   • Update rolling window
-    ///   • Compute spread pulse
-    ///   • Update MarketMetrics
-    ///   • Notify all subscribers for that pair
+    #[instrument(skip(self, event_rx), fields(pair = %pair.id()))]
     pub async fn process_event_stream(
         self: Arc<Self>,
         mut event_rx: Receiver<OmnistonEvent>,
         pair: Pair,
     ) {
+        info!("Beginning market event processing loop");
+
         while let Some(raw_event) = event_rx.recv().await {
             let OmnistonEvent::QuoteUpdated(quote) = raw_event else {
                 continue;
             };
 
             let nq = NormalizedQuote::from_event(&quote);
+            debug!(quote_id = %nq.ts_ms, "Received new market quote");
 
-            // ---- Build inputs ----
-            let price_input = PriceInput {
-                ts_ms: nq.ts_ms,
-                bid_units: nq.bid_units,
-                ask_units: nq.ask_units,
-            };
-
-            let quote_input = QuoteInput {
-                ts_ms: nq.ts_ms,
-                quote: Arc::from(quote),
-            };
-
-            // ---- Evaluate pulses (stateful, sequential) ----
+            // Evaluate pulses
             let (spread, trend, depth, slippage) = {
                 let mut pulses_guard = self.pulses.lock().await;
-
                 let pulse_state = pulses_guard
                     .entry(pair.clone())
                     .or_insert_with(PairPulseState::default);
 
                 (
-                    pulse_state.spread.evaluate(price_input),
-                    pulse_state.trend.evaluate(price_input),
-                    pulse_state.depth.evaluate(quote_input.clone()),
-                    pulse_state.slipage.evaluate(quote_input),
+                    pulse_state.spread.evaluate(PriceInput {
+                        ts_ms: nq.ts_ms,
+                        bid_units: nq.bid_units.clone(),
+                        ask_units: nq.ask_units.clone(),
+                    }),
+                    pulse_state.trend.evaluate(PriceInput {
+                        ts_ms: nq.ts_ms,
+                        bid_units: nq.bid_units,
+                        ask_units: nq.ask_units,
+                    }),
+                    pulse_state.depth.evaluate(QuoteInput {
+                        ts_ms: nq.ts_ms,
+                        quote: Arc::from(quote.clone()),
+                    }),
+                    pulse_state.slipage.evaluate(QuoteInput {
+                        ts_ms: nq.ts_ms,
+                        quote: Arc::from(quote),
+                    }),
                 )
             };
 
-            // ---- Validity gating ----
+            // Validity gating with warnings for dropped data
             if !matches!(
                 (
                     spread.validity,
@@ -169,42 +144,37 @@ impl<C: OmnistonApi> MarketManager<C> {
                     PulseValidity::Valid
                 )
             ) {
-                // Optional: debug log here
+                warn!(spread = ?spread.validity, trend = ?trend.validity, "Pulse data invalid; skipping broadcast");
                 continue;
             }
 
-            // ---- Update MarketMetrics ----
+            // Update Metrics and Broadcast
             let snapshot = {
                 let mut states_guard = self.states.lock().await;
-
                 let entry = states_guard
                     .entry(pair.clone())
                     .or_insert_with(MarketMetrics::default);
-
                 entry.spread = spread;
                 entry.trend = trend;
                 entry.depth = depth;
                 entry.slippage = slippage;
-
+                entry.ts_ms = nq.ts_ms;
                 entry.clone()
             };
 
-            // ---- Broadcast ----
             let subs_guard = self.subscribers.lock().await;
-
             if let Some(channels) = subs_guard.get(&pair) {
                 for ch in channels {
-                    let _ = ch.send(snapshot.clone()).await;
+                    if let Err(e) = ch.try_send(snapshot.clone()) {
+                        warn!(error = ?e, "Failed to send market snapshot to subscriber (channel full or closed)");
+                    }
                 }
             }
         }
 
-        println!("⚠️ RFQ stream ended for pair {}", pair.id());
+        warn!("Market stream processing loop terminated");
     }
 
-    /// Map a Pair to its blockchain asset addresses.
-    ///
-    /// TODO: Replace with actual resolver once Omniston finalizes API.
     fn fetch_pair_addresses(_pair: &Pair) -> (String, String) {
         (
             "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs".into(),
