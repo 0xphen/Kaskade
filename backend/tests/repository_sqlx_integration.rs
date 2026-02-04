@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 #[tokio::test]
 async fn fetch_by_id_round_trip() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let id = Uuid::new_v4();
@@ -90,7 +90,7 @@ async fn fetch_by_id_round_trip() {
         r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 42, 0, 0)"#,
     )
     .bind(id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -101,7 +101,7 @@ async fn fetch_by_id_round_trip() {
 
 #[tokio::test]
 async fn persist_fairness_updates_row() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let id = Uuid::new_v4();
@@ -109,7 +109,7 @@ async fn persist_fairness_updates_row() {
         r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#,
     )
     .bind(id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -117,7 +117,7 @@ async fn persist_fairness_updates_row() {
 
     let row = sqlx::query("SELECT deficit, last_served_ms FROM sessions WHERE session_id = ?")
         .bind(id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -127,14 +127,14 @@ async fn persist_fairness_updates_row() {
 
 #[tokio::test]
 async fn poison_rows_are_skipped() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     // Insert invalid UUID string
     sqlx::query(
         r#"INSERT INTO sessions VALUES ('bad-uuid', 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#,
     )
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -143,7 +143,7 @@ async fn poison_rows_are_skipped() {
         r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#,
     )
     .bind(good_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -155,7 +155,7 @@ async fn poison_rows_are_skipped() {
 
 #[tokio::test]
 async fn persist_fairness_numeric_overflow_error() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let id = Uuid::new_v4();
@@ -164,7 +164,7 @@ async fn persist_fairness_numeric_overflow_error() {
         r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#,
     )
     .bind(id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -179,7 +179,7 @@ async fn persist_fairness_numeric_overflow_error() {
 
 #[tokio::test]
 async fn test_concurrent_fairness_updates() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = Arc::new(SqlxSessionRepository::new(pool.clone()));
     let id = Uuid::new_v4();
 
@@ -187,7 +187,7 @@ async fn test_concurrent_fairness_updates() {
         r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#,
     )
     .bind(id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -208,7 +208,7 @@ async fn test_concurrent_fairness_updates() {
     // Verify row still exists and contains one of the valid states
     let row = sqlx::query("SELECT deficit FROM sessions WHERE session_id = ?")
         .bind(id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -218,7 +218,7 @@ async fn test_concurrent_fairness_updates() {
 
 #[tokio::test]
 async fn fetch_page_empty_at_offset() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     // Requesting a page when the DB is empty
@@ -229,7 +229,7 @@ async fn fetch_page_empty_at_offset() {
     for _ in 0..2 {
         sqlx::query(r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100000, 1000000, 1000, 10, 0, 0, 0, 100000, 0, 0, 0)"#)
             .bind(Uuid::new_v4().to_string())
-            .execute(&pool).await.unwrap();
+            .execute(&*pool).await.unwrap();
     }
 
     // Requesting offset exactly at total count
@@ -239,7 +239,7 @@ async fn fetch_page_empty_at_offset() {
 
 #[tokio::test]
 async fn reserve_execution_happy_path() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let session_id = Uuid::new_v4();
@@ -254,7 +254,7 @@ async fn reserve_execution_happy_path() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -277,7 +277,7 @@ async fn reserve_execution_happy_path() {
     let row =
         sqlx::query("SELECT in_flight_bid, in_flight_chunks FROM sessions WHERE session_id = ?")
             .bind(session_id.to_string())
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .unwrap();
 
@@ -287,7 +287,7 @@ async fn reserve_execution_happy_path() {
 
 #[tokio::test]
 async fn reserve_execution_fails_on_insufficient_bid() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
@@ -301,7 +301,7 @@ async fn reserve_execution_fails_on_insufficient_bid() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -320,7 +320,7 @@ async fn reserve_execution_fails_on_insufficient_bid() {
     // Ensure no partial state
     let row = sqlx::query("SELECT in_flight_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -329,7 +329,7 @@ async fn reserve_execution_fails_on_insufficient_bid() {
 
 #[tokio::test]
 async fn reserve_execution_rolls_back_on_failure() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let session_id = Uuid::new_v4();
@@ -344,7 +344,7 @@ async fn reserve_execution_rolls_back_on_failure() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -361,7 +361,7 @@ async fn reserve_execution_rolls_back_on_failure() {
     assert!(res.is_none());
 
     let batch_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM batches")
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -370,7 +370,7 @@ async fn reserve_execution_rolls_back_on_failure() {
 
 #[tokio::test]
 async fn reserve_execution_concurrent_safety() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = Arc::new(SqlxSessionRepository::new(pool.clone()));
     let session_id = Uuid::new_v4();
 
@@ -384,7 +384,7 @@ async fn reserve_execution_concurrent_safety() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -416,7 +416,7 @@ async fn reserve_execution_concurrent_safety() {
 
 #[tokio::test]
 async fn reserve_execution_pair_mismatch_fails() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
@@ -430,7 +430,7 @@ async fn reserve_execution_pair_mismatch_fails() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -449,7 +449,7 @@ async fn reserve_execution_pair_mismatch_fails() {
 
 #[tokio::test]
 async fn commit_batch_all_success() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let session_id = Uuid::new_v4();
@@ -464,7 +464,7 @@ async fn commit_batch_all_success() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -497,7 +497,7 @@ async fn commit_batch_all_success() {
 
     let row = sqlx::query("SELECT remaining_bid, in_flight_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -506,7 +506,7 @@ async fn commit_batch_all_success() {
 
     let status: String = sqlx::query_scalar("SELECT status FROM batches WHERE batch_id = ?")
         .bind(batch.batch_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -515,7 +515,7 @@ async fn commit_batch_all_success() {
 
 #[tokio::test]
 async fn commit_batch_partial_failure() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
@@ -529,7 +529,7 @@ async fn commit_batch_partial_failure() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -570,7 +570,7 @@ async fn commit_batch_partial_failure() {
 
     let row = sqlx::query("SELECT remaining_bid, in_flight_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -581,7 +581,7 @@ async fn commit_batch_partial_failure() {
 
 #[tokio::test]
 async fn commit_batch_all_failed() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
@@ -595,7 +595,7 @@ async fn commit_batch_all_failed() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -630,7 +630,7 @@ async fn commit_batch_all_failed() {
 
     let row = sqlx::query("SELECT remaining_bid, in_flight_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -640,7 +640,7 @@ async fn commit_batch_all_failed() {
 
 #[tokio::test]
 async fn commit_batch_is_idempotent() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
@@ -654,7 +654,7 @@ async fn commit_batch_is_idempotent() {
          0, 0, 0)"#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -691,7 +691,7 @@ async fn commit_batch_is_idempotent() {
 
     let row = sqlx::query("SELECT remaining_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -701,13 +701,13 @@ async fn commit_batch_is_idempotent() {
 
 #[tokio::test]
 async fn test_extreme_timestamp_persistence() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let id = Uuid::new_v4();
 
     // Setup session
     sqlx::query(r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100, 1000, 1000, 10, 0, 0, 0, 100, 0, 0, 0)"#)
-            .bind(id.to_string()).execute(&pool).await.unwrap();
+            .bind(id.to_string()).execute(&*pool).await.unwrap();
 
     // Use a very large u64 timestamp (e.g., year 2262 approx)
     let future_ms: u64 = i64::MAX as u64;
@@ -715,7 +715,7 @@ async fn test_extreme_timestamp_persistence() {
 
     let row = sqlx::query("SELECT last_served_ms FROM sessions WHERE session_id = ?")
         .bind(id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -726,12 +726,12 @@ async fn test_extreme_timestamp_persistence() {
 /// back to the session so they can be re-scheduled later.
 #[tokio::test]
 async fn test_commit_batch_unwinds_in_flight_on_failure() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
     sqlx::query(r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100, 1000, 1000, 10, 0, 0, 0, 100, 0, 0, 0)"#)
-            .bind(session_id.to_string()).execute(&pool).await.unwrap();
+            .bind(session_id.to_string()).execute(&*pool).await.unwrap();
 
     // Reserve 500 bid
     let alloc = PlannedAllocation {
@@ -761,7 +761,7 @@ async fn test_commit_batch_unwinds_in_flight_on_failure() {
 
     let row = sqlx::query("SELECT remaining_bid, in_flight_bid FROM sessions WHERE session_id = ?")
         .bind(session_id.to_string())
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .unwrap();
 
@@ -778,12 +778,12 @@ async fn test_commit_batch_unwinds_in_flight_on_failure() {
 /// Ensures that re-committing a batch doesn't keep pushing the cooldown further out.
 #[tokio::test]
 async fn test_commit_cooldown_idempotency() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
     let session_id = Uuid::new_v4();
 
     sqlx::query(r#"INSERT INTO sessions VALUES (?, 'TON/USDT', 1, 50, 100, 75, 100, 1000, 1000, 10, 0, 0, 0, 100, 0, 0, 0)"#)
-            .bind(session_id.to_string()).execute(&pool).await.unwrap();
+            .bind(session_id.to_string()).execute(&*pool).await.unwrap();
 
     let alloc = PlannedAllocation {
         session_id,
@@ -812,7 +812,7 @@ async fn test_commit_cooldown_idempotency() {
     let first_cd: i64 =
         sqlx::query_scalar("SELECT cooldown_until_ms FROM sessions WHERE session_id = ?")
             .bind(session_id.to_string())
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .unwrap();
 
@@ -821,7 +821,7 @@ async fn test_commit_cooldown_idempotency() {
     let second_cd: i64 =
         sqlx::query_scalar("SELECT cooldown_until_ms FROM sessions WHERE session_id = ?")
             .bind(session_id.to_string())
-            .fetch_one(&pool)
+            .fetch_one(&*pool)
             .await
             .unwrap();
 
@@ -833,7 +833,7 @@ async fn test_commit_cooldown_idempotency() {
 
 #[tokio::test]
 async fn recover_uncommitted_aborts_and_unwinds_state() {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
     let repo = SqlxSessionRepository::new(pool.clone());
 
     let session_id = Uuid::new_v4();
@@ -856,7 +856,7 @@ INSERT INTO sessions VALUES
 "#,
     )
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -868,7 +868,7 @@ VALUES (?, 'TON/USDT', 0, 'RESERVED', '');
 "#,
     )
     .bind(batch_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -883,7 +883,7 @@ VALUES (?, ?, ?, 500, 'PENDING', '', '');
     .bind(chunk_id.to_string())
     .bind(batch_id.to_string())
     .bind(session_id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -900,7 +900,7 @@ FROM sessions WHERE session_id = ?;
 "#,
     )
     .bind(session_id.to_string())
-    .fetch_one(&pool)
+    .fetch_one(&*pool)
     .await
     .unwrap();
 
@@ -932,7 +932,7 @@ SELECT status FROM batch_items WHERE chunk_id = ?;
 "#,
     )
     .bind(chunk_id.to_string())
-    .fetch_one(&pool)
+    .fetch_one(&*pool)
     .await
     .unwrap();
 
@@ -944,7 +944,7 @@ SELECT status FROM batches WHERE batch_id = ?;
 "#,
     )
     .bind(batch_id.to_string())
-    .fetch_one(&pool)
+    .fetch_one(&*pool)
     .await
     .unwrap();
 

@@ -1,6 +1,7 @@
 use anyhow::{Context, anyhow};
 use async_trait::async_trait;
 use sqlx::{AnyPool, Row};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::execution::types::{ChunkStatus, ReservedBatch, UserResult};
@@ -13,11 +14,11 @@ use crate::time::now_ms;
 /// SQLx-backed implementation of SessionRepository.
 /// Responsible only for persistence and row mapping.
 pub struct SqlxSessionRepository {
-    pool: AnyPool,
+    pool: Arc<AnyPool>,
 }
 
 impl SqlxSessionRepository {
-    pub fn new(pool: AnyPool) -> Self {
+    pub fn new(pool: Arc<AnyPool>) -> Self {
         Self { pool }
     }
 
@@ -47,7 +48,7 @@ LIMIT ? OFFSET ?;
         )
         .bind(limit as i64)
         .bind(offset as i64)
-        .fetch_all(&self.pool)
+        .fetch_all(&*self.pool)
         .await?;
 
         let mut out = Vec::new();
@@ -81,7 +82,7 @@ WHERE session_id = ?;
 "#,
         )
         .bind(session_id.to_string())
-        .fetch_optional(&self.pool)
+        .fetch_optional(&*self.pool)
         .await?;
 
         match row {
@@ -109,7 +110,7 @@ WHERE session_id = ?;
         .bind(deficit_i64)
         .bind(last_served_i64)
         .bind(session_id.to_string())
-        .execute(&self.pool)
+        .execute(&*self.pool)
         .await?;
 
         Ok(())
@@ -407,10 +408,8 @@ WHERE batch_id=?;
     }
 
     async fn recover_uncommitted(&self) -> anyhow::Result<()> {
-        let pool = &self.pool;
-
         let batches = sqlx::query(r#"SELECT batch_id FROM batches WHERE status = 'RESERVED';"#)
-            .fetch_all(pool)
+            .fetch_all(&*self.pool)
             .await?;
 
         for b in batches {
@@ -424,14 +423,14 @@ WHERE batch_id = ? AND status = 'PENDING';
 "#,
             )
             .bind(batch_id.clone())
-            .fetch_all(pool)
+            .fetch_all(&*self.pool)
             .await?;
 
             if items.is_empty() {
                 continue;
             }
 
-            let mut tx = pool.begin().await?;
+            let mut tx = self.pool.begin().await?;
 
             use std::collections::HashSet;
             let mut touched_sessions = HashSet::new();

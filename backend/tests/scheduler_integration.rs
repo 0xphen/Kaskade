@@ -145,12 +145,12 @@ INSERT INTO sessions VALUES
 }
 
 async fn setup_scheduler() -> (
-    AnyPool,
+    Arc<AnyPool>,
     Arc<dyn SessionRepository>,
     Arc<SessionStore>,
     Scheduler,
 ) {
-    let pool = setup_db().await;
+    let pool = Arc::new(setup_db().await);
 
     let repo: Arc<dyn SessionRepository> = Arc::new(SqlxSessionRepository::new(pool.clone()));
     let store = Arc::new(SessionStore::new(Arc::clone(&repo)));
@@ -300,7 +300,7 @@ async fn enqueue_failure_does_not_corrupt_state_single_tick() {
         .expect("on_tick");
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM batches WHERE status = 'RESERVED'")
-        .fetch_one(&pool)
+        .fetch_one(&*pool)
         .await
         .expect("count reserved batches");
 
@@ -374,7 +374,7 @@ async fn skips_sessions_with_pending_batch() {
     // Simulate an already-reserved batch (lockout)
     sqlx::query("UPDATE sessions SET has_pending_batch = 1 WHERE session_id = ?")
         .bind(id.to_string())
-        .execute(&pool)
+        .execute(&*pool)
         .await
         .unwrap();
 
@@ -415,7 +415,7 @@ async fn recognizes_reserved_batches_as_in_flight_bid() {
         "#,
     )
     .bind(id.to_string())
-    .execute(&pool)
+    .execute(&*pool)
     .await
     .unwrap();
 
@@ -449,7 +449,7 @@ async fn gate_a_strict_boundary_checks() {
     // Explicitly set max_spread_bps = 10.0
     sqlx::query("UPDATE sessions SET max_spread_bps = 10.0 WHERE session_id = ?")
         .bind(id.to_string())
-        .execute(&pool)
+        .execute(&*pool)
         .await
         .unwrap();
 

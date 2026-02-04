@@ -31,26 +31,6 @@ use crate::market_view::MarketViewStore;
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
-/// Input to the chain executor.
-///
-/// This must exactly correspond to a RESERVED batch item in persistent storage.
-/// No execution should occur outside of this structure.
-#[derive(Clone, Debug)]
-pub struct SwapCall {
-    pub pair_id: String,
-    pub session_id: uuid::Uuid,
-    pub bid: u128,
-    pub chunk_id: uuid::Uuid,
-}
-
-/// Receipt returned by the chain executor.
-///
-/// `tx_id` is persisted on success and is used for idempotency / audit.
-#[derive(Clone, Debug)]
-pub struct SwapReceipt {
-    pub tx_id: String,
-}
-
 /// Abstraction over the on-chain execution layer.
 ///
 /// This trait intentionally hides:
@@ -61,7 +41,10 @@ pub struct SwapReceipt {
 /// Errors must be normalized into stable strings by the implementation.
 #[async_trait]
 pub trait SwapExecutor: Send + Sync + 'static {
-    async fn execute_swap(&self, call: SwapCall) -> anyhow::Result<SwapReceipt>;
+    async fn execute_swap(
+        &self,
+        call: super::types::SwapCall,
+    ) -> anyhow::Result<super::types::SwapReceipt>;
 }
 
 /// Routes RESERVED batches into per-pair worker queues.
@@ -310,7 +293,7 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
 
                 match self
                     .exec
-                    .execute_swap(SwapCall {
+                    .execute_swap(super::types::SwapCall {
                         pair_id: batch.pair_id.clone(),
                         session_id: u.session_id,
                         bid: ch.bid,
@@ -408,6 +391,7 @@ mod tests {
     use async_trait::async_trait;
 
     use crate::execution::types::{ReservedChunk, ReservedUser};
+    use crate::execution::types::{SwapCall, SwapReceipt};
     use crate::market_view::MarketViewStore;
     use crate::session::model::{Session, SessionIntent, SessionState, UserConstraints};
     use crate::session::repository::SessionRepository;
