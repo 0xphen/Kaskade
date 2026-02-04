@@ -1,4 +1,5 @@
 /target
+/migrations
 .DS_Store
 Cargo.lock
 
