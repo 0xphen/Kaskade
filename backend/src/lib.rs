@@ -1,6 +1,7 @@
 pub mod config;
 pub mod db;
 pub mod execution;
+pub mod market;
 pub mod market_view;
 pub mod metrics;
 pub mod planner;

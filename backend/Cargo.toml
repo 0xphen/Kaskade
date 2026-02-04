@@ -4,34 +4,33 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
-
-uuid = { version = "1.20", features = ["v4", "serde"] }
-
-parking_lot = "0.12"
-async-trait = "0.1"
-
-tokio = { version = "1.37", features = ["full"] }
-
 anyhow = "1.0"
+async-trait = "0.1"
+chrono = "0.4.42"
+futures = "0.3"
+parking_lot = "0.12"
 thiserror = "2.0.18"
+uuid = { version = "1.20", features = ["v4", "serde"] }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-[dependencies.sqlx]
-version = "0.8.6"
-features = [
-  "runtime-tokio-rustls",
+tokio = { version = "1.37", features = ["full"] }
+tokio-tungstenite = { version = "0.28", features = ["native-tls"] }
+
+sqlx = { version = "0.8.6", features = [
+  "chrono",
   "macros",
-  "sqlite",
   "postgres",
-  "uuid",
-  "chrono"
-]
+  "runtime-tokio-rustls",
+  "sqlite",
+  "uuid"
+] }
+
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "json"] }
 
 [dev-dependencies]
 proptest = "1.4"
-tracing-test = "0.2"
 tokio = { version = "1.37", features = ["macros", "rt-multi-thread", "time", "test-util"] }
+tracing-test = "0.2"

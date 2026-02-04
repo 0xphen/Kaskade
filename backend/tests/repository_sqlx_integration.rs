@@ -950,6 +950,6 @@ SELECT status FROM batches WHERE batch_id = ?;
 
     assert_eq!(batch_status, "ABORTED");
 
-    // Idempotency: running recovery again must be safe 
+    // Idempotency: running recovery again must be safe
     repo.recover_uncommitted().await.unwrap();
 }
