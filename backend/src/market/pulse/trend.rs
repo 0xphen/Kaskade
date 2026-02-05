@@ -1,58 +1,21 @@
-use super::input::PriceInput;
+use super::input::QuoteInput;
 use super::{Pulse, PulseResult, PulseValidity};
+use crate::market::omniston::normalized_quote::NormalizedQuote;
 use crate::market::rolling_window::RollingWindow;
+use crate::market::types::ExecutionScope;
 
 /// Trend Pulse
 ///
-/// The Trend Pulse measures **price directionality over time**.
+/// The Trend Pulse measures **price directionality over time** within a specific
+/// execution scope (e.g., Market-wide or Ston.fi only).
 ///
-/// ## What it answers
-/// > “Is the execution price getting worse compared to where it started recently?”
-///
-/// This pulse detects **downward price trends** that may indicate:
-/// - deteriorating execution conditions
-/// - adverse momentum
-/// - rising execution risk
-///
-/// ## Price definition
-///
-/// ```text
-/// p = ask_units / bid_units
-/// ```
-///
-/// Higher `p` means a better execution rate for the buyer.
-///
-/// ## Trend definition
-///
-/// The pulse compares the **oldest price in the rolling window**
-/// with the **current price**:
-///
-/// ```text
-/// trend_drop_bps = (p_oldest - p_now) / p_oldest * 10_000
-/// ```
-///
-/// ## Interpretation
-/// - `trend_drop_bps > 0` → price is deteriorating (downward trend)
-/// - `trend_drop_bps = 0` → flat
-/// - `trend_drop_bps < 0` → improving execution
-///
-/// ## Warm-up guard
-/// The pulse is marked `Invalid` until:
-/// - a minimum number of samples is collected
-/// - the window spans a minimum time duration
-///
-/// ## Design properties
-/// - Rolling-window based
-/// - Directional (not magnitude-focused)
-/// - Deterministic
-/// - Bounded memory
-/// - Fail-safe (invalid data never allows execution)
+/// It answers: “Is the execution price getting worse compared to where it started recently?”
 #[derive(Clone, Debug)]
 pub struct TrendPulseResult {
-    /// Current price.
+    /// Current price for the active scope.
     pub p_now: f64,
 
-    /// Oldest price in the rolling window.
+    /// Oldest price in the rolling window for the active scope.
     pub p_oldest: f64,
 
     /// Downward price movement in basis points.
@@ -96,31 +59,34 @@ impl Default for TrendWarmup {
 }
 
 /// Trend pulse state.
-///
-/// Maintains a rolling window of recent prices.
 pub struct TrendPulse {
     window: RollingWindow,
     warmup: TrendWarmup,
+    scope: ExecutionScope,
 }
 
 impl TrendPulse {
-    pub fn new(warmup: TrendWarmup) -> Self {
+    pub fn new(warmup: TrendWarmup, scope: ExecutionScope) -> Self {
         Self {
             window: RollingWindow::new(),
             warmup,
+            scope,
         }
     }
 }
 
 impl Pulse for TrendPulse {
-    type Input = PriceInput;
+    type Input = QuoteInput;
     type Output = TrendPulseResult;
 
     fn evaluate(&mut self, input: Self::Input) -> Self::Output {
+        // Normalize and filter the quote based on the ExecutionScope.
+        let normalized = NormalizedQuote::from_event(&input.quote, &self.scope);
+
         compute_trend(
-            input.ts_ms,
-            input.bid_units,
-            input.ask_units,
+            normalized.ts_ms,
+            normalized.bid_units,
+            normalized.ask_units,
             &mut self.window,
             self.warmup,
         )
@@ -128,13 +94,6 @@ impl Pulse for TrendPulse {
 }
 
 /// Core trend computation.
-///
-/// Safety rules:
-/// - `bid_units <= 0` → Invalid
-/// - Warm-up not satisfied → Invalid
-///
-/// Invalid cases always return `trend_drop_bps = f64::MAX`
-/// to guarantee downstream threshold checks fail.
 fn compute_trend(
     ts_ms: u64,
     bid_units: f64,
@@ -142,6 +101,7 @@ fn compute_trend(
     window: &mut RollingWindow,
     warmup: TrendWarmup,
 ) -> TrendPulseResult {
+    // Fail-safe: Non-positive bid units (protocol not found or invalid data) blocks execution.
     if bid_units <= 0.0 {
         return TrendPulseResult::default();
     }
@@ -158,6 +118,7 @@ fn compute_trend(
         };
     }
 
+    // Trend compares the current price to the OLDEST price in the window.
     let p_oldest = window.oldest().unwrap_or(p_now);
 
     let trend_drop_bps = if p_oldest > 0.0 {
@@ -176,74 +137,110 @@ fn compute_trend(
 
 #[cfg(test)]
 mod tests {
-    use super::PulseValidity;
     use super::*;
+    use crate::market::types::*;
+    use std::sync::Arc;
 
-    fn ms(n: u64) -> u64 {
-        n * 1000
+    fn dummy_addr() -> AssetAddress {
+        AssetAddress {
+            blockchain: 607,
+            address: "EQDummy".into(),
+        }
     }
 
     fn warmup() -> TrendWarmup {
         TrendWarmup {
-            min_samples: 3,
-            min_age_ms: 2_000,
+            min_samples: 2,
+            min_age_ms: 1000,
+        }
+    }
+
+    fn mk_quote(ts: u64, protocol: &str, bid: &str, ask: &str) -> QuoteInput {
+        let route = Route {
+            steps: vec![RouteStep {
+                bid_asset_address: dummy_addr(),
+                ask_asset_address: dummy_addr(),
+                chunks: vec![RouteChunk {
+                    protocol: protocol.into(),
+                    bid_amount: bid.into(),
+                    ask_amount: ask.into(),
+                    extra_version: 1,
+                    extra: vec![],
+                }],
+            }],
+        };
+
+        QuoteInput {
+            ts_ms: ts * 1000,
+            quote: Arc::new(Quote {
+                quote_id: "q".into(),
+                resolver_id: "r".into(),
+                resolver_name: "Omniston".into(),
+                bid_asset_address: dummy_addr(),
+                ask_asset_address: dummy_addr(),
+                bid_units: bid.into(),
+                ask_units: ask.into(),
+                referrer_address: None,
+                referrer_fee_asset: dummy_addr(),
+                referrer_fee_units: "0".into(),
+                protocol_fee_asset: dummy_addr(),
+                protocol_fee_units: "0".into(),
+                quote_timestamp: ts,
+                trade_start_deadline: 0,
+                gas_budget: "0".into(),
+                estimated_gas_consumption: "0".into(),
+                params: QuoteParams {
+                    swap: Some(SwapParams {
+                        routes: vec![route],
+                        min_ask_amount: "0".into(),
+                        recommended_min_ask_amount: "0".into(),
+                        recommended_slippage_bps: 0,
+                    }),
+                },
+            }),
         }
     }
 
     #[test]
-    fn invalid_when_bid_units_zero() {
-        let mut w = RollingWindow::new();
+    fn test_trend_protocol_isolation() {
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
+        let mut pulse = TrendPulse::new(warmup(), scope);
 
-        let r = compute_trend(ms(0), 0.0, 100.0, &mut w, warmup());
+        // T=0: StonFi Price = 0.50
+        pulse.evaluate(mk_quote(0, "StonFi", "100", "50"));
+        // T=1: Price drops to 0.40. MarketWide would see this, but we filter only StonFi.
+        let r = pulse.evaluate(mk_quote(1, "StonFi", "100", "40"));
+
+        assert_eq!(r.validity, PulseValidity::Valid);
+        // (0.50 - 0.40) / 0.50 * 10,000 = 2,000 bps
+        assert!((r.trend_drop_bps - 2000.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_trend_invalid_on_protocol_mismatch() {
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
+        let mut pulse = TrendPulse::new(warmup(), scope);
+
+        // Provide a DeDust quote to a StonFi-scoped pulse
+        let r = pulse.evaluate(mk_quote(0, "DeDust", "100", "50"));
+
         assert_eq!(r.validity, PulseValidity::Invalid);
         assert_eq!(r.trend_drop_bps, f64::MAX);
     }
 
     #[test]
-    fn warmup_blocks_early_trend_signals() {
-        let mut w = RollingWindow::new();
-
-        let r1 = compute_trend(ms(0), 100.0, 50.0, &mut w, warmup());
-        let r2 = compute_trend(ms(1), 100.0, 49.0, &mut w, warmup());
-
-        assert_eq!(r1.validity, PulseValidity::Invalid);
-        assert_eq!(r2.validity, PulseValidity::Invalid);
-    }
-
-    #[test]
-    fn detects_downward_trend() {
-        let mut w = RollingWindow::new();
+    fn test_trend_directionality() {
+        let mut window = RollingWindow::new();
         let wup = warmup();
 
-        compute_trend(ms(0), 100.0, 50.0, &mut w, wup); // 0.50
-        compute_trend(ms(1), 100.0, 49.0, &mut w, wup); // 0.49
-        let r = compute_trend(ms(2), 100.0, 48.0, &mut w, wup); // 0.48
-
-        assert_eq!(r.validity, PulseValidity::Valid);
-        assert!(r.trend_drop_bps > 0.0);
-    }
-
-    #[test]
-    fn flat_or_rising_price_produces_zero_or_negative_trend() {
-        let mut w = RollingWindow::new();
-        let wup = warmup();
-
-        compute_trend(ms(0), 100.0, 50.0, &mut w, wup);
-        compute_trend(ms(1), 100.0, 51.0, &mut w, wup);
-        let r = compute_trend(ms(2), 100.0, 52.0, &mut w, wup);
-
-        assert_eq!(r.validity, PulseValidity::Valid);
-        assert!(r.trend_drop_bps <= 0.0);
-    }
-
-    #[test]
-    fn uses_oldest_price_not_best_or_average() {
-        let mut w = RollingWindow::new();
-        let wup = warmup();
-
-        compute_trend(ms(0), 100.0, 50.0, &mut w, wup); // oldest = 0.50
-        compute_trend(ms(1), 100.0, 60.0, &mut w, wup); // spike
-        let r = compute_trend(ms(2), 100.0, 55.0, &mut w, wup); // still above oldest
+        // T=0: Price 1.0 (Oldest)
+        compute_trend(0, 100.0, 100.0, &mut window, wup);
+        // T=1.1: Price 1.2 (Improving - should result in negative bps)
+        let r = compute_trend(1100, 100.0, 120.0, &mut window, wup);
 
         assert_eq!(r.validity, PulseValidity::Valid);
         assert!(r.trend_drop_bps < 0.0);

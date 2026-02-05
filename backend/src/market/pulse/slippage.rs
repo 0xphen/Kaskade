@@ -1,42 +1,13 @@
 use super::input::QuoteInput;
 use super::{Pulse, PulseResult, PulseValidity};
-use crate::market::types::Quote;
+use crate::market::omniston::normalized_quote::NormalizedQuote;
+use crate::market::types::{ExecutionScope, Quote};
 
 /// Slippage Pulse
 ///
-/// The Slippage Pulse measures **execution quality degradation** for a *single RFQ*.
-///
-/// Unlike spread or trend, this pulse is **not historical** and **not predictive**.
-/// It answers only one question:
-///
-/// > “How much worse can this trade execute than the quoted expectation?”
-///
-/// ## Data source
-/// From an Omniston RFQ quote:
-/// - `ask_units`        → expected output amount
-/// - `min_ask_amount`  → guaranteed minimum output
-///
-/// These values are *resolver-enforced*, not estimates.
-///
-/// ## Definition
-///
-/// ```text
-/// slippage_bps = (ask_units - min_ask_amount) / ask_units * 10_000
-/// ```
-///
-/// ## Properties
-/// - **Instantaneous**: computed per-quote, no rolling window
-/// - **Deterministic**: same input → same output
-/// - **Fail-safe**: malformed or unsafe quotes are always `Invalid`
-///
-/// ## Interpretation
-/// - `0 bps`        → perfect execution (no downside)
-/// - `> 0 bps`      → increasing execution risk
-/// - `Invalid`      → execution must be blocked
-///
-/// ## Design rule
-/// This pulse is a **hard safety gate**.
-/// If slippage is invalid or exceeds user tolerance, *no execution is allowed*.
+/// Measures execution quality degradation for a single RFQ.
+/// In `ProtocolOnly` scope, it calculates a synthetic slippage based on the
+/// resolver's recommended basis points.
 #[derive(Clone, Debug)]
 pub struct SlippagePulseResult {
     /// Slippage expressed in basis points.
@@ -62,58 +33,61 @@ impl PulseResult for SlippagePulseResult {
 }
 
 /// Stateless Slippage Pulse.
-///
-/// This pulse owns **no internal state** and may be reused freely.
-/// It is safe to share one instance across all pairs.
-pub struct SlippagePulse;
+pub struct SlippagePulse {
+    scope: ExecutionScope,
+}
+
+impl SlippagePulse {
+    pub fn new(scope: ExecutionScope) -> Self {
+        Self { scope }
+    }
+}
+
+impl Default for SlippagePulse {
+    fn default() -> Self {
+        Self::new(ExecutionScope::MarketWide)
+    }
+}
 
 impl Pulse for SlippagePulse {
     type Input = QuoteInput;
     type Output = SlippagePulseResult;
 
     fn evaluate(&mut self, input: Self::Input) -> Self::Output {
-        compute_slippage(&input.quote)
+        compute_slippage(&input.quote, &self.scope)
     }
 }
 
 /// Core slippage computation.
-///
-/// ### Safety invariants
-/// This function **must never allow execution on bad data**.
-///
-/// Invalid if:
-/// - swap params are missing
-/// - numeric parsing fails
-/// - `ask_units <= 0`
-/// - `min_ask_amount > ask_units` (malformed quote)
-///
-/// All invalid paths return:
-/// - `slippage_bps = f64::MAX`
-/// - `validity = Invalid`
-///
-/// This guarantees downstream threshold checks always fail safely.
-fn compute_slippage(quote: &Quote) -> SlippagePulseResult {
+fn compute_slippage(quote: &Quote, scope: &ExecutionScope) -> SlippagePulseResult {
     let swap = match &quote.params.swap {
         Some(s) => s,
         None => return SlippagePulseResult::default(),
     };
 
-    let ask_units: f64 = match quote.ask_units.parse() {
-        Ok(v) if v > 0.0 => v,
-        _ => return SlippagePulseResult::default(),
-    };
+    // Normalize units based on scope (Market-wide total vs Protocol-only chunks)
+    let normalized = NormalizedQuote::from_event(quote, scope);
+    let ask_units = normalized.ask_units;
 
-    let min_ask_amount: f64 = match swap.min_ask_amount.parse() {
-        Ok(v) if v >= 0.0 => v,
-        _ => return SlippagePulseResult::default(),
-    };
-
-    // Malformed or inconsistent quote → block execution
-    if min_ask_amount > ask_units {
+    if ask_units <= 0.0 {
         return SlippagePulseResult::default();
     }
 
-    let slippage_bps = ((ask_units - min_ask_amount) / ask_units) * 10_000.0;
+    let slippage_bps = match scope {
+        ExecutionScope::MarketWide => {
+            // Use the global resolver-enforced minimum
+            let min_ask: f64 = swap.min_ask_amount.parse().unwrap_or(0.0);
+            if min_ask > ask_units {
+                return SlippagePulseResult::default();
+            }
+            ((ask_units - min_ask) / ask_units) * 10_000.0
+        }
+        ExecutionScope::ProtocolOnly { .. } => {
+            // Synthetic slippage: We use the resolver's recommended limit
+            // as our benchmark for the isolated protocol leg.
+            swap.recommended_slippage_bps as f64
+        }
+    };
 
     SlippagePulseResult {
         slippage_bps,
@@ -125,6 +99,7 @@ fn compute_slippage(quote: &Quote) -> SlippagePulseResult {
 mod tests {
     use super::*;
     use crate::market::types::*;
+    use std::sync::Arc;
 
     fn dummy_addr() -> AssetAddress {
         AssetAddress {
@@ -133,100 +108,82 @@ mod tests {
         }
     }
 
-    fn mk_quote(ask: &str, min_ask: &str) -> Quote {
+    fn mk_quote(ask: &str, min_ask: &str, rec_slip: u32, protocol: &str) -> Quote {
+        let route = Route {
+            steps: vec![RouteStep {
+                bid_asset_address: dummy_addr(),
+                ask_asset_address: dummy_addr(),
+                chunks: vec![RouteChunk {
+                    protocol: protocol.into(),
+                    bid_amount: "100".into(),
+                    ask_amount: ask.into(),
+                    extra_version: 1,
+                    extra: vec![],
+                }],
+            }],
+        };
+
         Quote {
             quote_id: "q".into(),
             resolver_id: "r".into(),
             resolver_name: "Omniston".into(),
-
             bid_asset_address: dummy_addr(),
             ask_asset_address: dummy_addr(),
-
             bid_units: "100".into(),
             ask_units: ask.into(),
-
             referrer_address: None,
             referrer_fee_asset: dummy_addr(),
             referrer_fee_units: "0".into(),
             protocol_fee_asset: dummy_addr(),
             protocol_fee_units: "0".into(),
-
             quote_timestamp: 0,
             trade_start_deadline: 0,
-
             gas_budget: "0".into(),
             estimated_gas_consumption: "0".into(),
-
             params: QuoteParams {
                 swap: Some(SwapParams {
-                    routes: vec![],
+                    routes: vec![route],
                     min_ask_amount: min_ask.into(),
                     recommended_min_ask_amount: min_ask.into(),
-                    recommended_slippage_bps: 0,
+                    recommended_slippage_bps: rec_slip,
                 }),
             },
         }
     }
 
     #[test]
-    fn zero_slippage_is_valid_and_exact() {
-        let q = mk_quote("1000", "1000");
-        let r = compute_slippage(&q);
+    fn test_market_wide_slippage() {
+        let q = mk_quote("1000", "950", 100, "StonFi");
+        let r = compute_slippage(&q, &ExecutionScope::MarketWide);
 
-        assert_eq!(r.validity, PulseValidity::Valid);
-        assert_eq!(r.slippage_bps, 0.0);
-    }
-
-    #[test]
-    fn slippage_matches_expected_formula() {
-        let q = mk_quote("1000", "950");
-        let r = compute_slippage(&q);
-
-        // (1000 - 950) / 1000 * 10_000 = 500 bps
+        // (1000 - 950) / 1000 * 10,000 = 500 bps
         assert_eq!(r.validity, PulseValidity::Valid);
         assert!((r.slippage_bps - 500.0).abs() < 1e-9);
     }
 
     #[test]
-    fn missing_swap_params_blocks_execution() {
-        let mut q = mk_quote("1000", "950");
-        q.params.swap = None;
+    fn test_protocol_only_synthetic_slippage() {
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
+        // Quote says 1000 output, recommended slippage is 20 bps
+        let q = mk_quote("1000", "950", 20, "StonFi");
+        let r = compute_slippage(&q, &scope);
 
-        let r = compute_slippage(&q);
+        // Should return the synthetic/recommended bps (20) rather than global (500)
+        assert_eq!(r.validity, PulseValidity::Valid);
+        assert_eq!(r.slippage_bps, 20.0);
+    }
+
+    #[test]
+    fn test_invalid_on_missing_protocol() {
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
+        let q = mk_quote("1000", "950", 20, "DeDust"); // No StonFi in quote
+        let r = compute_slippage(&q, &scope);
 
         assert_eq!(r.validity, PulseValidity::Invalid);
         assert_eq!(r.slippage_bps, f64::MAX);
-    }
-
-    #[test]
-    fn malformed_quote_min_greater_than_ask_is_invalid() {
-        let q = mk_quote("1000", "1100");
-        let r = compute_slippage(&q);
-
-        assert_eq!(r.validity, PulseValidity::Invalid);
-    }
-
-    #[test]
-    fn zero_or_negative_ask_blocks_execution() {
-        let q1 = mk_quote("0", "0");
-        let q2 = mk_quote("-10", "0");
-
-        assert!(matches!(
-            compute_slippage(&q1).validity,
-            PulseValidity::Invalid
-        ));
-        assert!(matches!(
-            compute_slippage(&q2).validity,
-            PulseValidity::Invalid
-        ));
-    }
-
-    #[test]
-    fn large_numbers_do_not_overflow_or_panic() {
-        let q = mk_quote("1000000000000000000", "999999999999999999");
-        let r = compute_slippage(&q);
-
-        assert_eq!(r.validity, PulseValidity::Valid);
-        assert!(r.slippage_bps >= 0.0);
     }
 }

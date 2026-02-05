@@ -9,7 +9,7 @@ use tracing::{Instrument, debug, error, info, instrument, warn};
 
 use super::{
     omniston::{OmnistonApi, normalized_quote::NormalizedQuote},
-    types::{MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
+    types::{ExecutionScope, MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
 };
 use crate::market::pulse::{PairPulseState, Pulse, PulseValidity, input::*};
 
@@ -97,26 +97,31 @@ impl<C: OmnistonApi> MarketManager<C> {
                 continue;
             };
 
-            let nq = NormalizedQuote::from_event(&quote);
+            let nq = NormalizedQuote::from_event(
+                &quote,
+                &ExecutionScope::ProtocolOnly {
+                    protocol: "StonFiV2".to_string(),
+                },
+            );
+
             debug!(quote_id = %nq.ts_ms, "Received new market quote");
 
             // Evaluate pulses
             let (spread, trend, depth, slippage) = {
                 let mut pulses_guard = self.pulses.lock().await;
+
                 let pulse_state = pulses_guard
                     .entry(pair.clone())
                     .or_insert_with(PairPulseState::default);
 
                 (
-                    pulse_state.spread.evaluate(PriceInput {
+                    pulse_state.spread.evaluate(QuoteInput {
                         ts_ms: nq.ts_ms,
-                        bid_units: nq.bid_units.clone(),
-                        ask_units: nq.ask_units.clone(),
+                        quote: Arc::from(quote.clone()),
                     }),
-                    pulse_state.trend.evaluate(PriceInput {
+                    pulse_state.trend.evaluate(QuoteInput {
                         ts_ms: nq.ts_ms,
-                        bid_units: nq.bid_units,
-                        ask_units: nq.ask_units,
+                        quote: Arc::from(quote.clone()),
                     }),
                     pulse_state.depth.evaluate(QuoteInput {
                         ts_ms: nq.ts_ms,

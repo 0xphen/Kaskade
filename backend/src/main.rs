@@ -7,7 +7,7 @@ use backend::{
     execution::{
         executor::{PairExecutorRouter, SwapExecutor},
         recover_uncommitted,
-        types::{self, ExecutionEvent, SwapCall, SwapReceipt},
+        types::{self, ExecutionEvent, SwapReceipt},
     },
     logger::init_tracing,
     market::manager::MarketManager,
@@ -118,7 +118,7 @@ fn start_market_feed(market_view: MarketViewStore, pair: Pair) {
 
     let req = SubscriptionRequest {
         pair: pair.clone(),
-        amount: RfqAmount::BidUnits("1000000".into()),
+        amount: RfqAmount::BidUnits("200000000".into()),
         sender_ch: tx,
     };
 

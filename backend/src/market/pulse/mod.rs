@@ -4,6 +4,8 @@ pub mod slippage;
 pub mod spread;
 pub mod trend;
 
+use crate::market::types::ExecutionScope;
+
 /// Warm-up requirements for
 pub const MIN_SAMPLES: usize = 10;
 pub const MIN_AGE_MS: u64 = 5_000;
@@ -49,11 +51,18 @@ pub struct PairPulseState {
 
 impl Default for PairPulseState {
     fn default() -> Self {
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonfiV2".to_string(),
+        };
+
         Self {
-            spread: spread::SpreadPulse::new(spread::SpreadWarmup::default()),
-            trend: trend::TrendPulse::new(trend::TrendWarmup::default()),
-            depth: depth::DepthPulse::default(),
-            slipage: slippage::SlippagePulse,
+            spread: spread::SpreadPulse::new(spread::SpreadWarmup::default(), scope.clone()),
+
+            trend: trend::TrendPulse::new(trend::TrendWarmup::default(), scope.clone()),
+
+            depth: depth::DepthPulse::new(scope.clone()),
+
+            slipage: slippage::SlippagePulse::new(scope),
         }
     }
 }

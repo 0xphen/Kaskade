@@ -149,3 +149,9 @@ pub struct MarketMetrics {
     pub trend: TrendPulseResult,
     pub depth: DepthPulseResult,
 }
+
+#[derive(Clone, Debug)]
+pub enum ExecutionScope {
+    MarketWide,
+    ProtocolOnly { protocol: String },
+}

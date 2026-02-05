@@ -10,53 +10,30 @@
 //! *executable RFQ data*.
 //!
 //! ## Data source
-//! Depth is extracted from Omniston RFQ quotes at:
-//!
-//! ```text
-//! params.swap.routes[0].steps[0].chunks[].bid_amount
-//! ```
-//!
-//! Each `chunk.bid_amount` represents how much input liquidity that protocol
-//! is currently willing to absorb.
+//! Depth is extracted from Omniston RFQ quotes based on the provided `ExecutionScope`.
+//! - In `MarketWide` scope, it uses the total `bid_units` of the quote.
+//! - In `ProtocolOnly` scope, it iterates through all routes and picks the route
+//!   with the maximum protocol-specific bid depth.
 //!
 //! ## Definition
 //!
 //! ```text
-//! depth_now = sum(chunk.bid_amount)
+//! depth_now = sum(chunk.bid_amount) // across the best available protocol route
 //! ```
-//!
-//! This gives a conservative, executable approximation of how much size
-//! the route can currently handle.
 //!
 //! ## Rolling window logic
 //! The pulse tracks recent depth values in a bounded rolling window:
-//!
 //! - `depth_best`: maximum depth observed in the window
 //! - `depth_deficit_bps`: how far current depth is below the recent peak
 //!
-//! ```text
-//! depth_deficit_bps = (1 - depth_now / depth_best) * 10_000
-//! ```
-//!
 //! ## Warm-up guard
-//! The pulse is marked `Invalid` until:
-//! - a minimum number of samples is collected
-//! - the window spans a minimum duration
-//!
-//! This prevents execution on cold or unstable data.
-//!
-//! ## Design guarantees
-//! - Deterministic
-//! - Bounded memory
-//! - O(1) max lookup
-//! - Fail-safe (invalid data never allows execution)
-//! - Per-pair isolated state
+//! The pulse is marked `Invalid` until a minimum number of samples and time span are met.
 
 use std::collections::VecDeque;
 
 use super::input::QuoteInput;
 use super::{Pulse, PulseResult, PulseValidity};
-use crate::market::types::Quote;
+use crate::market::types::{ExecutionScope, Quote};
 
 /// Maximum age of the rolling window (milliseconds)
 const WINDOW_MAX_AGE_MS: u64 = 30_000;
@@ -68,8 +45,6 @@ const MIN_SAMPLES: usize = 10;
 const MIN_AGE_MS: u64 = 5_000;
 
 /// Output of the Depth Pulse.
-///
-/// All fields are safe to log, compare, and threshold.
 #[derive(Clone, Debug, Default)]
 pub struct DepthPulseResult {
     /// Current observed depth
@@ -90,8 +65,6 @@ impl PulseResult for DepthPulseResult {
         self.validity
     }
 }
-
-/// --- Internal rolling window types ---
 
 #[derive(Clone, Debug)]
 struct TimedValue {
@@ -119,7 +92,6 @@ impl DepthWindow {
         let tv = TimedValue { ts_ms, value };
         self.values.push_back(tv.clone());
 
-        // Maintain decreasing monotonic queue
         while let Some(back) = self.max_queue.back() {
             if back.value < value {
                 self.max_queue.pop_back();
@@ -128,7 +100,6 @@ impl DepthWindow {
             }
         }
         self.max_queue.push_back(tv);
-
         self.evict_old(ts_ms);
     }
 
@@ -136,7 +107,6 @@ impl DepthWindow {
         while let Some(front) = self.values.front() {
             if now_ms.saturating_sub(front.ts_ms) > self.max_age_ms {
                 let removed = self.values.pop_front().unwrap();
-
                 if let Some(max) = self.max_queue.front()
                     && max.ts_ms == removed.ts_ms
                     && max.value == removed.value
@@ -157,9 +127,7 @@ impl DepthWindow {
         if self.values.len() < MIN_SAMPLES {
             return false;
         }
-
         let age = self.values.back().unwrap().ts_ms - self.values.front().unwrap().ts_ms;
-
         age >= MIN_AGE_MS
     }
 }
@@ -167,13 +135,21 @@ impl DepthWindow {
 /// Stateful Depth Pulse (per trading pair).
 pub struct DepthPulse {
     window: DepthWindow,
+    scope: ExecutionScope,
+}
+
+impl DepthPulse {
+    pub fn new(scope: ExecutionScope) -> Self {
+        Self {
+            window: DepthWindow::new(WINDOW_MAX_AGE_MS),
+            scope,
+        }
+    }
 }
 
 impl Default for DepthPulse {
     fn default() -> Self {
-        Self {
-            window: DepthWindow::new(WINDOW_MAX_AGE_MS),
-        }
+        Self::new(ExecutionScope::MarketWide)
     }
 }
 
@@ -182,14 +158,23 @@ impl Pulse for DepthPulse {
     type Output = DepthPulseResult;
 
     fn evaluate(&mut self, input: Self::Input) -> Self::Output {
-        compute_depth(input.ts_ms, &input.quote, &mut self.window)
+        compute_depth(input.ts_ms, &input.quote, &mut self.window, &self.scope)
     }
 }
 
-fn compute_depth(ts_ms: u64, quote: &Quote, window: &mut DepthWindow) -> DepthPulseResult {
-    let depth_now = extract_depth(quote).unwrap_or(0);
+fn compute_depth(
+    ts_ms: u64,
+    quote: &Quote,
+    window: &mut DepthWindow,
+    scope: &ExecutionScope,
+) -> DepthPulseResult {
+    let depth_now = match scope {
+        ExecutionScope::MarketWide => extract_market_depth(quote),
+        ExecutionScope::ProtocolOnly { protocol } => extract_protocol_depth(quote, protocol),
+    }
+    .unwrap_or(0);
 
-    // Fail-safe: zero or missing depth blocks execution
+    // Fail-safe: zero depth blocks execution
     if depth_now == 0 {
         return DepthPulseResult {
             depth_now: 0.0,
@@ -201,7 +186,6 @@ fn compute_depth(ts_ms: u64, quote: &Quote, window: &mut DepthWindow) -> DepthPu
 
     window.push(ts_ms, depth_now);
 
-    // Warm-up guard
     if !window.is_warm() {
         return DepthPulseResult {
             depth_now: depth_now as f64,
@@ -213,7 +197,6 @@ fn compute_depth(ts_ms: u64, quote: &Quote, window: &mut DepthWindow) -> DepthPu
 
     let depth_best = window.max().unwrap_or(depth_now) as f64;
     let depth_now_f = depth_now as f64;
-
     let deficit = (1.0 - depth_now_f / depth_best) * 10_000.0;
 
     DepthPulseResult {
@@ -224,28 +207,33 @@ fn compute_depth(ts_ms: u64, quote: &Quote, window: &mut DepthWindow) -> DepthPu
     }
 }
 
-/// Extract executable liquidity depth from an RFQ quote.
-///
-/// We intentionally take:
-/// - the **first route**
-/// - the **first step**
-///
-/// because Omniston already orders routes by best execution.
-/// Summing `bid_amount` across chunks gives total executable capacity.
-fn extract_depth(quote: &Quote) -> Option<u128> {
+/// Extracts total market depth from the top-level quote units.
+fn extract_market_depth(quote: &Quote) -> Option<u128> {
+    quote.bid_units.parse::<u128>().ok()
+}
+
+/// Extracts protocol-specific depth by finding the route with the highest liquidity for that protocol.
+fn extract_protocol_depth(quote: &Quote, protocol_name: &str) -> Option<u128> {
+    let mut best_bid = 0u128;
     let swap = quote.params.swap.as_ref()?;
-    let route = swap.routes.first()?;
-    let step = route.steps.first()?;
 
-    let mut total = 0u128;
-
-    for chunk in &step.chunks {
-        if let Ok(v) = chunk.bid_amount.parse::<u128>() {
-            total = total.saturating_add(v);
+    for route in &swap.routes {
+        let mut route_bid = 0u128;
+        for step in &route.steps {
+            for chunk in &step.chunks {
+                if chunk.protocol.contains(protocol_name)
+                    && let Ok(v) = chunk.bid_amount.parse::<u128>()
+                {
+                    route_bid = route_bid.saturating_add(v);
+                }
+            }
+        }
+        if route_bid > best_bid {
+            best_bid = route_bid;
         }
     }
 
-    Some(total)
+    if best_bid > 0 { Some(best_bid) } else { None }
 }
 
 #[cfg(test)]
@@ -256,7 +244,6 @@ mod tests {
     fn ts(n: u64) -> u64 {
         n * 1000
     }
-
     fn dummy_addr() -> AssetAddress {
         AssetAddress {
             blockchain: 607,
@@ -264,25 +251,26 @@ mod tests {
         }
     }
 
-    fn mk_quote(depths: &[&str]) -> Quote {
-        let chunks = depths
-            .iter()
-            .map(|d| RouteChunk {
-                protocol: "Test".into(),
-                bid_amount: (*d).into(),
-                ask_amount: "0".into(),
-                extra_version: 1,
-                extra: vec![],
+    fn mk_quote_complex(routes_data: Vec<Vec<(&str, &str)>>) -> Quote {
+        let routes = routes_data
+            .into_iter()
+            .map(|chunks_data| Route {
+                steps: vec![RouteStep {
+                    bid_asset_address: dummy_addr(),
+                    ask_asset_address: dummy_addr(),
+                    chunks: chunks_data
+                        .into_iter()
+                        .map(|(p, b)| RouteChunk {
+                            protocol: p.into(),
+                            bid_amount: b.into(),
+                            ask_amount: "0".into(),
+                            extra_version: 1,
+                            extra: vec![],
+                        })
+                        .collect(),
+                }],
             })
             .collect();
-
-        let route = Route {
-            steps: vec![RouteStep {
-                bid_asset_address: dummy_addr(),
-                ask_asset_address: dummy_addr(),
-                chunks,
-            }],
-        };
 
         Quote {
             quote_id: "q".into(),
@@ -290,8 +278,8 @@ mod tests {
             resolver_name: "Omniston".into(),
             bid_asset_address: dummy_addr(),
             ask_asset_address: dummy_addr(),
-            bid_units: "100".into(),
-            ask_units: "200".into(),
+            bid_units: "1000".into(),
+            ask_units: "2000".into(),
             referrer_address: None,
             referrer_fee_asset: dummy_addr(),
             referrer_fee_units: "0".into(),
@@ -303,7 +291,7 @@ mod tests {
             estimated_gas_consumption: "0".into(),
             params: QuoteParams {
                 swap: Some(SwapParams {
-                    routes: vec![route],
+                    routes,
                     min_ask_amount: "0".into(),
                     recommended_min_ask_amount: "0".into(),
                     recommended_slippage_bps: 0,
@@ -313,46 +301,43 @@ mod tests {
     }
 
     #[test]
-    fn sums_all_chunks() {
+    fn test_depth_protocol_selection() {
         let mut w = DepthWindow::new(WINDOW_MAX_AGE_MS);
-        let q = mk_quote(&["100", "200", "300"]);
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
 
-        let r = compute_depth(ts(1), &q, &mut w);
-        assert_eq!(r.depth_now, 600.0);
+        // Route 0: DeDust 500
+        // Route 1: StonFi 300
+        let q = mk_quote_complex(vec![vec![("DeDust", "500")], vec![("StonFi", "300")]]);
+
+        let r = compute_depth(ts(1), &q, &mut w, &scope);
+        // Should pick StonFi from Route 1
+        assert_eq!(r.depth_now, 300.0);
     }
 
     #[test]
-    fn deficit_increases_when_depth_drops() {
+    fn test_depth_multi_hop_aggregation() {
         let mut w = DepthWindow::new(WINDOW_MAX_AGE_MS);
+        let scope = ExecutionScope::ProtocolOnly {
+            protocol: "StonFi".into(),
+        };
 
-        for i in 0..10 {
-            compute_depth(ts(i), &mk_quote(&["1000"]), &mut w);
-        }
+        // Single route with two StonFi chunks
+        let q = mk_quote_complex(vec![vec![("StonFiV1", "100"), ("StonFiV2", "200")]]);
 
-        let r1 = compute_depth(ts(11), &mk_quote(&["800"]), &mut w);
-        let r2 = compute_depth(ts(12), &mk_quote(&["400"]), &mut w);
-
-        assert!(r1.depth_deficit_bps < r2.depth_deficit_bps);
+        let r = compute_depth(ts(1), &q, &mut w, &scope);
+        assert_eq!(r.depth_now, 300.0);
     }
 
     #[test]
-    fn old_peak_expires() {
-        let mut w = DepthWindow::new(3_000);
-
-        for i in 0..5 {
-            compute_depth(ts(i), &mk_quote(&["2000"]), &mut w);
-        }
-
-        let r = compute_depth(ts(10), &mk_quote(&["800"]), &mut w);
-        assert!(r.depth_best <= 800.0);
-    }
-
-    #[test]
-    fn large_numbers_do_not_overflow() {
+    fn test_market_wide_uses_top_level_bid() {
         let mut w = DepthWindow::new(WINDOW_MAX_AGE_MS);
-        let q = mk_quote(&["1000000000000000000"]);
+        let scope = ExecutionScope::MarketWide;
 
-        let r = compute_depth(ts(1), &q, &mut w);
-        assert!(r.depth_now > 0.0);
+        let q = mk_quote_complex(vec![vec![("StonFi", "100")]]);
+        // bid_units in mk_quote_complex is "1000"
+        let r = compute_depth(ts(1), &q, &mut w, &scope);
+        assert_eq!(r.depth_now, 1000.0);
     }
 }

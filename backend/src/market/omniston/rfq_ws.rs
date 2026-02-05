@@ -129,14 +129,13 @@ impl OmnistonApi for OmnistonWsClient {
                                 }
                             };
 
-                            print!("raw: {:?}", raw);
-
-                            // Only log raw events at TRACE level to avoid production log bloat
+                            println!("raw: {:?}", raw);
                             tracing::trace!(raw_event = %raw, "Received raw WebSocket message");
 
                             match parse_omniston_event(raw, &super::QuoteSide::Bid) {
                                 Ok(Some(ev)) => {
                                     debug!(event_type = ?ev, "Parsed Omniston event, forwarding to channel");
+
                                     if let Err(e) = sender.send(ev).await {
                                         error!(error = ?e, "MPSC channel receiver dropped; worker shutting down");
                                         return Err(anyhow::anyhow!("Channel closed: {}", e));
