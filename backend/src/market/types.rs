@@ -1,8 +1,31 @@
-use super::pulse::{
-    depth::DepthPulseResult, slippage::SlippagePulseResult, spread::SpreadPulseResult,
-    trend::TrendPulseResult,
-};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// Snapshot of raw STON.fi pool state
+#[derive(Debug, Clone)]
+pub struct PoolSnapshot {
+    pub reserve0: u128,
+    pub reserve1: u128,
+    pub lp_fee: u32,       // e.g. 20 = 0.20%
+    pub protocol_fee: u32, // e.g. 10 = 0.10%
+    pub ts_ms: u64,
+}
+
+/// Combined market metrics for a pool at a specific time.
+///
+/// This represents *market health*, not execution results.
+#[derive(Debug, Clone, Default)]
+pub struct MarketMetrics {
+    pub ts_ms: u64,
+
+    /// Structural friction (fees + AMM curvature).
+    pub spread_bps: f64,
+
+    /// Downward price pressure (positive = drop).
+    pub trend_drop_bps: f64,
+
+    /// Market is healthy enough to trade.
+    pub validity: bool,
+}
 
 #[derive(Debug, Clone)]
 pub enum RfqAmount {
@@ -141,13 +164,20 @@ pub struct SubscriptionRequest {
     pub sender_ch: tokio::sync::mpsc::Sender<MarketMetrics>,
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct MarketMetrics {
+/// Immutable market snapshot used by scheduler (Gate A) and executor (Gate B).
+/// Metrics are computed upstream and treated as advisory constraints only.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MarketMetricsView {
+    /// Snapshot timestamp (ms since epoch)
     pub ts_ms: u64,
-    pub spread: SpreadPulseResult,
-    pub slippage: SlippagePulseResult,
-    pub trend: TrendPulseResult,
-    pub depth: DepthPulseResult,
+
+    /// Execution constraint metrics (basis points)
+    pub spread_bps: f64,
+    pub trend_drop_bps: f64,
+    pub slippage_bps: f64,
+
+    /// Available input-side liquidity at snapshot time
+    pub depth_now_in: u128,
 }
 
 #[derive(Clone, Debug)]

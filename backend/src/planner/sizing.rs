@@ -1,6 +1,6 @@
 use tracing::{Span, debug, field, instrument};
 
-use crate::market_view::types::MarketMetricsView;
+use crate::market::types::MarketMetricsView;
 use crate::planner::types::{PlannedAllocation, SizingPolicy, UserIntent};
 
 /// Convert scheduler intents into concrete, bounded per-user allocations for the current tick.

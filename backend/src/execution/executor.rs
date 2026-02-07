@@ -27,7 +27,7 @@ use crate::execution::commit_batch;
 use crate::execution::types::{
     ChunkResult, ChunkStatus, ExecutionEvent, ReservedBatch, UserResult,
 };
-use crate::market_view::MarketViewStore;
+use crate::market::market_view_store::MarketViewStore;
 use crate::session::model::Session;
 use crate::session::store::SessionStore;
 
@@ -344,10 +344,7 @@ impl<E: SwapExecutor> ExecutorWorker<E> {
 
 /// Gate B: final constraint enforcement right before execution.
 /// Missing market data fails closed.
-fn gate_b_ok(
-    session: &Session,
-    market: Option<&crate::market_view::types::MarketMetricsView>,
-) -> bool {
+fn gate_b_ok(session: &Session, market: Option<&crate::market::types::MarketMetricsView>) -> bool {
     let m = match market {
         Some(m) => m,
         None => return false,
@@ -392,7 +389,7 @@ mod tests {
 
     use crate::execution::types::{ReservedChunk, ReservedUser};
     use crate::execution::types::{SwapCall, SwapReceipt};
-    use crate::market_view::MarketViewStore;
+    use crate::market::market_view_store::MarketViewStore;
     use crate::session::model::{Session, SessionIntent, SessionState, UserConstraints};
     use crate::session::repository::SessionRepository;
     use crate::session::store::SessionStore;
@@ -554,7 +551,7 @@ mod tests {
         market_view
             .set(
                 "TON/USDT",
-                crate::market_view::types::MarketMetricsView {
+                crate::market::types::MarketMetricsView {
                     ts_ms: 0,
                     spread_bps: 5.0,
                     trend_drop_bps: 5.0,
@@ -732,7 +729,7 @@ mod tests {
         market_view
             .set(
                 "TON/USDT",
-                crate::market_view::types::MarketMetricsView {
+                crate::market::types::MarketMetricsView {
                     ts_ms: 0,
                     spread_bps: 5.0,
                     trend_drop_bps: 5.0,

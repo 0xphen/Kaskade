@@ -1,189 +1,88 @@
-use std::collections::HashMap;
+//! Market subsystem entry-point.
+//!
+//! Responsible for spawning and managing market pollers
+//! (one poller per trading pair).
+
+use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{
-    Mutex,
-    mpsc::{self, Receiver, Sender},
-};
-// Production logging imports
-use tracing::{Instrument, debug, error, info, instrument, warn};
+use std::time::Duration;
 
-use super::{
-    omniston::{OmnistonApi, normalized_quote::NormalizedQuote},
-    types::{ExecutionScope, MarketMetrics, OmnistonEvent, Pair, RfqRequest, SubscriptionRequest},
-};
-use crate::market::pulse::{PairPulseState, Pulse, PulseValidity, input::*};
+use anyhow::{Result, anyhow};
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+use tracing::info;
 
-pub struct MarketManager<C> {
-    pub states: Arc<Mutex<HashMap<Pair, MarketMetrics>>>,
-    pub omniston_ws_client: Arc<C>,
-    pub subscribers: Arc<Mutex<HashMap<Pair, Vec<Sender<MarketMetrics>>>>>,
-    pub pulses: Arc<Mutex<HashMap<Pair, PairPulseState>>>,
+use crate::market::market_view_store::MarketViewStore;
+use crate::market::stonfi::client::StonfiClient;
+use crate::market::stonfi::market_service::StonfiMarketService;
+use crate::market::stonfi::poller::run_stonfi_market_poller;
+
+/// MarketManager controls lifecycle of market pollers.
+///
+/// Guarantees:
+/// - One poller per pair
+/// - Safe concurrent subscription
+#[derive(Clone)]
+pub struct MarketManager {
+    client: StonfiClient,
+    store: MarketViewStore,
+    poll_every: Duration,
+
+    // Tracks active pollers to prevent duplicates
+    active_pairs: Arc<Mutex<HashSet<String>>>,
 }
 
-impl<C: OmnistonApi> MarketManager<C> {
-    pub fn new(omniston_ws_client: Arc<C>) -> Arc<Self> {
-        Arc::new(Self {
-            omniston_ws_client,
-            states: Arc::new(Mutex::new(HashMap::new())),
-            subscribers: Arc::new(Mutex::new(HashMap::new())),
-            pulses: Arc::new(Mutex::new(HashMap::new())),
-        })
-    }
-
-    #[instrument(skip(self, request), fields(pair = %request.pair.id()))]
-    pub async fn subscribe(self: Arc<Self>, request: SubscriptionRequest) {
-        let SubscriptionRequest {
-            pair,
-            amount,
-            sender_ch,
-        } = request;
-        let mut map = self.subscribers.lock().await;
-
-        if map.get(&pair).is_none() {
-            let (bid_asset, ask_asset) = Self::fetch_pair_addresses(&pair);
-            map.insert(pair.clone(), vec![sender_ch]);
-
-            info!("Initializing new market feed for pair");
-
-            let req = RfqRequest {
-                bid_asset,
-                ask_asset,
-                amount,
-            };
-            let (tx, rx) = mpsc::channel(50);
-            let ws_client = Arc::clone(&self.omniston_ws_client);
-
-            // Spawn RFQ stream task with its own instrumented span
-            let pair_id = pair.id();
-            let stream_span = tracing::info_span!("rfq_stream_task", %pair_id);
-            tokio::spawn(
-                async move {
-                    info!("Starting RFQ WebSocket stream");
-                    if let Err(e) = ws_client.request_for_quote_stream(req, tx).await {
-                        error!(error = ?e, "RFQ WebSocket stream crashed");
-                    }
-                }
-                .instrument(stream_span),
-            );
-
-            // Spawn event processing task
-            let mm = Arc::clone(&self);
-            let pair_clone = pair.clone();
-            let processor_span =
-                tracing::info_span!("event_processor_task", pair = %pair_clone.id());
-            tokio::spawn(
-                async move {
-                    debug!("Receiver task running for events");
-                    mm.process_event_stream(rx, pair_clone).await;
-                }
-                .instrument(processor_span),
-            );
-        } else {
-            map.entry(pair.clone()).or_default().push(sender_ch);
-            debug!("Added new subscriber to existing pair stream");
+impl MarketManager {
+    /// Create a new market manager.
+    pub fn new(client: StonfiClient, store: MarketViewStore, poll_every: Duration) -> Self {
+        Self {
+            client,
+            store,
+            poll_every,
+            active_pairs: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
-    #[instrument(skip(self, event_rx), fields(pair = %pair.id()))]
-    pub async fn process_event_stream(
-        self: Arc<Self>,
-        mut event_rx: Receiver<OmnistonEvent>,
-        pair: Pair,
-    ) {
-        info!("Beginning market event processing loop");
-
-        while let Some(raw_event) = event_rx.recv().await {
-            let OmnistonEvent::QuoteUpdated(quote) = raw_event else {
-                continue;
-            };
-
-            let ts_ms = quote.quote_timestamp;
-
-            debug!(quote_id = ts_ms, "Received new market quote");
-
-            // Evaluate pulses
-            let (spread, trend, depth, slippage) = {
-                let mut pulses_guard = self.pulses.lock().await;
-
-                let pulse_state = pulses_guard
-                    .entry(pair.clone())
-                    .or_insert_with(PairPulseState::default);
-
-                (
-                    pulse_state.spread.evaluate(QuoteInput {
-                        ts_ms,
-                        quote: Arc::from(quote.clone()),
-                    }),
-                    pulse_state.trend.evaluate(QuoteInput {
-                        ts_ms,
-                        quote: Arc::from(quote.clone()),
-                    }),
-                    pulse_state.depth.evaluate(QuoteInput {
-                        ts_ms,
-                        quote: Arc::from(quote.clone()),
-                    }),
-                    pulse_state.slipage.evaluate(QuoteInput {
-                        ts_ms,
-                        quote: Arc::from(quote),
-                    }),
-                )
-            };
-
-            println!(
-                "VIEW: {:?}, {:?}, {:?}, {:?}",
-                spread, trend, slippage, depth
-            );
-
-            // Validity gating with warnings for dropped data
-            if !matches!(
-                (
-                    spread.validity,
-                    trend.validity,
-                    depth.validity,
-                    slippage.validity
-                ),
-                (
-                    PulseValidity::Valid,
-                    PulseValidity::Valid,
-                    PulseValidity::Valid,
-                    PulseValidity::Valid
-                )
-            ) {
-                warn!(spread = ?spread.validity, trend = ?trend.validity, "Pulse data invalid; skipping broadcast");
-                continue;
+    /// Subscribe to market data for a STON.fi pair.
+    ///
+    /// Spawns a background poller task if not already active.
+    ///
+    /// # Arguments
+    /// - `pair_id`
+    /// - `pool_address` → STON.fi pool address
+    /// - `window_size`  → rolling window length
+    /// - `min_warmup_ms`→ trend warm-up duration
+    pub async fn subscribe_stonfi_pair(
+        &self,
+        pair_id: String,
+        pool_address: String,
+        window_size: usize,
+        min_warmup_ms: u64,
+    ) -> Result<JoinHandle<Result<()>>> {
+        {
+            let mut g = self.active_pairs.lock().await;
+            if g.contains(&pair_id) {
+                return Err(anyhow!("market poller already running for {}", pair_id));
             }
-
-            // Update Metrics and Broadcast
-            let snapshot = {
-                let mut states_guard = self.states.lock().await;
-                let entry = states_guard
-                    .entry(pair.clone())
-                    .or_insert_with(MarketMetrics::default);
-                entry.spread = spread;
-                entry.trend = trend;
-                entry.depth = depth;
-                entry.slippage = slippage;
-                entry.ts_ms = ts_ms;
-                entry.clone()
-            };
-
-            let subs_guard = self.subscribers.lock().await;
-            if let Some(channels) = subs_guard.get(&pair) {
-                for ch in channels {
-                    if let Err(e) = ch.try_send(snapshot.clone()) {
-                        warn!(error = ?e, "Failed to send market snapshot to subscriber (channel full or closed)");
-                    }
-                }
-            }
+            g.insert(pair_id.clone());
         }
 
-        warn!("Market stream processing loop terminated");
-    }
+        info!(
+            pair = %pair_id,
+            pool = %pool_address,
+            "starting stonfi market poller"
+        );
 
-    fn fetch_pair_addresses(_pair: &Pair) -> (String, String) {
-        (
-            "EQCxE6mUtQJKFnGfaROTKOt1lZbDiiX1kCixRv7Nw2Id_sDs".into(),
-            "EQC98_qAmNEptUtPc7W6xdHh_ZHrBUFpw5Ft_IzNU20QAJav".into(),
-        )
+        let client = self.client.clone();
+        let store = self.store.clone();
+        let poll_every = self.poll_every;
+
+        let market = StonfiMarketService::new(window_size, min_warmup_ms);
+
+        let handle = tokio::spawn(async move {
+            run_stonfi_market_poller(pair_id, pool_address, poll_every, client, market, store).await
+        });
+
+        Ok(handle)
     }
 }

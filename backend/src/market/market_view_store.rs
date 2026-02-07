@@ -1,11 +1,8 @@
-pub mod types;
-
 use std::collections::HashMap;
 use std::sync::Arc;
-
 use tokio::sync::RwLock;
 
-use crate::market_view::types::MarketMetricsView;
+use crate::market::types::MarketMetricsView;
 
 /// In-memory store of the latest market snapshot per trading pair.
 /// Used by scheduler (Gate A) and executor (Gate B) for constraint checks.

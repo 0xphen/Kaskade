@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use backend::{
     execution::types::{ChunkResult, ChunkStatus, ExecutionEvent, ReservedBatch, UserResult},
-    market_view::types::MarketMetricsView,
+    market::types::MarketMetricsView,
     metrics::counters::Counters,
     scheduler::scheduler::Scheduler,
     session::{

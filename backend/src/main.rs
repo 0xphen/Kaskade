@@ -11,9 +11,7 @@ use backend::{
     },
     logger::init_tracing,
     market::manager::MarketManager,
-    market::omniston::rfq_ws::OmnistonWsClient,
-    market::types::{MarketMetrics, Pair, RfqAmount, SubscriptionRequest},
-    market_view::{MarketViewStore, types::MarketMetricsView},
+    market::{market_view_store::MarketViewStore, stonfi::StonfiClient, types::Pair},
     metrics::counters::Counters,
     scheduler::scheduler::Scheduler,
     session::repository_sqlx::SqlxSessionRepository,
@@ -107,42 +105,12 @@ fn start_scheduler_loop(
     });
 }
 
-/// Starts Omniston market subscription and continuously updates MarketViewStore.
-fn start_market_feed(market_view: MarketViewStore, pair: Pair) {
-    let pair_id = pair.id();
+fn setup_market_manager(market_view: MarketViewStore, cfg: &AppConfig) -> MarketManager {
+    let stonfi_client = StonfiClient::new(cfg.stonfi_http_endpoint.clone()).unwrap();
 
-    let omniston_ws_client = Arc::new(OmnistonWsClient::new("wss://omni-ws.ston.fi".into()));
-    let market = MarketManager::new(omniston_ws_client);
+    let market = MarketManager::new(stonfi_client, market_view, Duration::from_secs(3));
 
-    let (tx, mut rx) = mpsc::channel::<MarketMetrics>(100);
-
-    let req = SubscriptionRequest {
-        pair: pair.clone(),
-        amount: RfqAmount::BidUnits("200000000".into()),
-        sender_ch: tx,
-    };
-
-    tokio::spawn(async move {
-        market.subscribe(req).await;
-    });
-
-    // Consume metrics and update the shared MarketViewStore.
-    tokio::spawn(async move {
-        while let Some(snapshot) = rx.recv().await {
-            let view = MarketMetricsView {
-                spread_bps: snapshot.spread.spread_bps,
-                trend_drop_bps: snapshot.trend.trend_drop_bps,
-                slippage_bps: snapshot.slippage.slippage_bps,
-                depth_now_in: snapshot.depth.depth_now as u128,
-                ts_ms: snapshot.ts_ms,
-            };
-
-            market_view.set(&pair_id, view).await;
-        }
-
-        // If rx closes, the market feed task died or unsubscribed.
-        tracing::warn!(pair_id=%pair_id, "market feed channel closed; market updates stopped");
-    });
+    market
 }
 
 #[tokio::main]
@@ -182,9 +150,20 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_millis(250),
     );
 
-    start_market_feed(market_view, pair);
+    let market_manager = Arc::new(setup_market_manager(market_view, &cfg));
 
-    tracing::info!(pair_id=%pair_id, "Backend started; waiting for shutdown signal");
+    let mm = Arc::clone(&market_manager);
+    let pair_id_clone = pair_id.clone();
+    let pool_addr = "EQDxmqSzZAfVuIubSDHwI4Y0uV6hy_4sxSYeIj_UmQESukxk".to_string();
+
+    tokio::spawn(async move {
+        if let Err(e) = mm
+            .subscribe_stonfi_pair(pair_id_clone, pool_addr, 10, 20_000)
+            .await
+        {
+            tracing::error!(error=?e, "failed to subscribe stonfi pair");
+        }
+    });
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutdown signal received");

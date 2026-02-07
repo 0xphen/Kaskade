@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::execution::reserve_execution;
 use crate::execution::types::{ExecutionEvent, ReservedBatch};
 use crate::logger::warn_if_slow;
-use crate::market_view::types::MarketMetricsView;
+use crate::market::types::MarketMetricsView;
 use crate::metrics::counters::Counters;
 use crate::planner::sizing::derive_execution_plan;
 use crate::planner::types::{PlannedAllocation, SizingPolicy, UserIntent as PlannerUserIntent};

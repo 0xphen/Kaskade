@@ -1,5 +1,7 @@
 #[derive(Clone, Debug)]
 pub struct AppConfig {
+    pub stonfi_http_endpoint: String,
+
     /// Database connection string.
     pub database_url: String,
 
@@ -67,9 +69,12 @@ impl AppConfig {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kaskade_dev.db".to_string());
 
+        let stonfi_http_endpoint =
+            std::env::var("STONFI_HTTP_URL").unwrap_or_else(|_| "https://api.ston.fi".to_string());
+
         Self {
             database_url,
-
+            stonfi_http_endpoint,
             // Scheduler defaults:
             // - scan widely for fairness (DRR)
             // - schedule conservatively per tick
