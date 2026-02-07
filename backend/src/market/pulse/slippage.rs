@@ -99,7 +99,6 @@ fn compute_slippage(quote: &Quote, scope: &ExecutionScope) -> SlippagePulseResul
 mod tests {
     use super::*;
     use crate::market::types::*;
-    use std::sync::Arc;
 
     fn dummy_addr() -> AssetAddress {
         AssetAddress {

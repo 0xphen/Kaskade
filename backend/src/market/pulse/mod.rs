@@ -52,7 +52,7 @@ pub struct PairPulseState {
 impl Default for PairPulseState {
     fn default() -> Self {
         let scope = ExecutionScope::ProtocolOnly {
-            protocol: "StonfiV2".to_string(),
+            protocol: "StonFiV2".to_string(),
         };
 
         Self {

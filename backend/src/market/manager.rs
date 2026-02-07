@@ -97,14 +97,9 @@ impl<C: OmnistonApi> MarketManager<C> {
                 continue;
             };
 
-            let nq = NormalizedQuote::from_event(
-                &quote,
-                &ExecutionScope::ProtocolOnly {
-                    protocol: "StonFiV2".to_string(),
-                },
-            );
+            let ts_ms = quote.quote_timestamp;
 
-            debug!(quote_id = %nq.ts_ms, "Received new market quote");
+            debug!(quote_id = ts_ms, "Received new market quote");
 
             // Evaluate pulses
             let (spread, trend, depth, slippage) = {
@@ -116,23 +111,28 @@ impl<C: OmnistonApi> MarketManager<C> {
 
                 (
                     pulse_state.spread.evaluate(QuoteInput {
-                        ts_ms: nq.ts_ms,
+                        ts_ms,
                         quote: Arc::from(quote.clone()),
                     }),
                     pulse_state.trend.evaluate(QuoteInput {
-                        ts_ms: nq.ts_ms,
+                        ts_ms,
                         quote: Arc::from(quote.clone()),
                     }),
                     pulse_state.depth.evaluate(QuoteInput {
-                        ts_ms: nq.ts_ms,
+                        ts_ms,
                         quote: Arc::from(quote.clone()),
                     }),
                     pulse_state.slipage.evaluate(QuoteInput {
-                        ts_ms: nq.ts_ms,
+                        ts_ms,
                         quote: Arc::from(quote),
                     }),
                 )
             };
+
+            println!(
+                "VIEW: {:?}, {:?}, {:?}, {:?}",
+                spread, trend, slippage, depth
+            );
 
             // Validity gating with warnings for dropped data
             if !matches!(
@@ -163,7 +163,7 @@ impl<C: OmnistonApi> MarketManager<C> {
                 entry.trend = trend;
                 entry.depth = depth;
                 entry.slippage = slippage;
-                entry.ts_ms = nq.ts_ms;
+                entry.ts_ms = ts_ms;
                 entry.clone()
             };
 
