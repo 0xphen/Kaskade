@@ -91,7 +91,7 @@ fn start_scheduler_loop(
             ticker.tick().await;
 
             let Some(market) = market_view.get(&pair_id).await else {
-                // No market snapshot yet → skip scheduling.
+                // No market snapshot yet -> skip scheduling.
                 continue;
             };
 
@@ -154,11 +154,17 @@ async fn main() -> anyhow::Result<()> {
 
     let mm = Arc::clone(&market_manager);
     let pair_id_clone = pair_id.clone();
-    let pool_addr = "EQDxmqSzZAfVuIubSDHwI4Y0uV6hy_4sxSYeIj_UmQESukxk".to_string();
+    let pool_addr = "EQAdPJcaFwTk7CfJIeE9HElAyjBqx_tni6_m8cDCv9X0SOwn".to_string();
 
     tokio::spawn(async move {
         if let Err(e) = mm
-            .subscribe_stonfi_pair(pair_id_clone, pool_addr, 10, 20_000)
+            .subscribe_stonfi_pair(
+                pair_id_clone,
+                pool_addr,
+                cfg.window_size,
+                cfg.min_warm_up,
+                cfg.max_slippage_bps,
+            )
             .await
         {
             tracing::error!(error=?e, "failed to subscribe stonfi pair");

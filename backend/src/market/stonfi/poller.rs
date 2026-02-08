@@ -62,12 +62,23 @@ pub async fn run_stonfi_market_poller(
 
         let metrics = market.tick(snapshot);
 
+        if !metrics.validity {
+            tracing::warn!(
+                pool = %pair_id,
+                ts_ms = metrics.ts_ms,
+                spread_bps = metrics.spread_bps,
+                trend_drop_bps = metrics.trend_drop_bps,
+                valid = metrics.validity,
+                "market metrics invalid — skipping scheduling tick"
+            );
+            continue;
+        }
+
         let view = MarketMetricsView {
             ts_ms: metrics.ts_ms,
             spread_bps: metrics.spread_bps,
             trend_drop_bps: metrics.trend_drop_bps,
-            slippage_bps: 0.0, // computed at execution time
-            depth_now_in: 0,   // deferred to later version
+            max_depth: metrics.max_depth,
         };
 
         store.set(&pair_id, view.clone()).await;

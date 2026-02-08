@@ -23,6 +23,8 @@ pub struct MarketMetrics {
     /// Downward price pressure (positive = drop).
     pub trend_drop_bps: f64,
 
+    pub max_depth: u128,
+
     /// Market is healthy enough to trade.
     pub validity: bool,
 }
@@ -174,10 +176,8 @@ pub struct MarketMetricsView {
     /// Execution constraint metrics (basis points)
     pub spread_bps: f64,
     pub trend_drop_bps: f64,
-    pub slippage_bps: f64,
 
-    /// Available input-side liquidity at snapshot time
-    pub depth_now_in: u128,
+    pub max_depth: u128,
 }
 
 #[derive(Clone, Debug)]

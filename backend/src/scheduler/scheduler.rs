@@ -280,5 +280,4 @@ impl Scheduler {
 pub fn constraints_ok(s: &Session, m: &MarketMetricsView) -> bool {
     m.spread_bps <= s.intent.constraints.max_spread_bps
         && m.trend_drop_bps <= s.intent.constraints.max_trend_drop_bps
-        && m.slippage_bps <= s.intent.constraints.max_slippage_bps
 }

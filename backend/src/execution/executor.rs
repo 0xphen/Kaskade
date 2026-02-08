@@ -352,7 +352,6 @@ fn gate_b_ok(session: &Session, market: Option<&crate::market::types::MarketMetr
 
     m.spread_bps <= session.intent.constraints.max_spread_bps
         && m.trend_drop_bps <= session.intent.constraints.max_trend_drop_bps
-        && m.slippage_bps <= session.intent.constraints.max_slippage_bps
 }
 
 /// Normalizes executor errors into stable bounded strings.
@@ -555,8 +554,7 @@ mod tests {
                     ts_ms: 0,
                     spread_bps: 5.0,
                     trend_drop_bps: 5.0,
-                    slippage_bps: 5.0,
-                    depth_now_in: 1_000,
+                    max_depth: 1_000,
                 },
             )
             .await;
@@ -733,8 +731,7 @@ mod tests {
                     ts_ms: 0,
                     spread_bps: 5.0,
                     trend_drop_bps: 5.0,
-                    slippage_bps: 5.0,
-                    depth_now_in: 1_000,
+                    max_depth: 1_000,
                 },
             )
             .await;

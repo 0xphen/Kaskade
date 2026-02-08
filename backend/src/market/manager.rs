@@ -58,6 +58,7 @@ impl MarketManager {
         pool_address: String,
         window_size: usize,
         min_warmup_ms: u64,
+        max_slippage_bps: f64,
     ) -> Result<JoinHandle<Result<()>>> {
         {
             let mut g = self.active_pairs.lock().await;
@@ -77,7 +78,7 @@ impl MarketManager {
         let store = self.store.clone();
         let poll_every = self.poll_every;
 
-        let market = StonfiMarketService::new(window_size, min_warmup_ms);
+        let market = StonfiMarketService::new(window_size, min_warmup_ms, max_slippage_bps);
 
         let handle = tokio::spawn(async move {
             run_stonfi_market_poller(pair_id, pool_address, poll_every, client, market, store).await

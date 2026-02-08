@@ -97,8 +97,7 @@ fn good_market() -> MarketMetricsView {
         ts_ms: now_ms(),
         spread_bps: 10.0,
         trend_drop_bps: 5.0,
-        slippage_bps: 10.0,
-        depth_now_in: 1_000_000_000,
+        max_depth: 1_000_000_000,
     }
 }
 

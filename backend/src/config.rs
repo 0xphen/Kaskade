@@ -1,6 +1,9 @@
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub stonfi_http_endpoint: String,
+    pub max_slippage_bps: f64,
+    pub min_warm_up: u64,
+    pub window_size: usize,
 
     /// Database connection string.
     pub database_url: String,
@@ -69,8 +72,8 @@ impl AppConfig {
         let database_url =
             std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://kaskade_dev.db".to_string());
 
-        let stonfi_http_endpoint =
-            std::env::var("STONFI_HTTP_URL").unwrap_or_else(|_| "https://api.ston.fi".to_string());
+        let stonfi_http_endpoint = std::env::var("STONFI_HTTP_URL")
+            .unwrap_or_else(|_| "https://api.ston.fi/v1".to_string());
 
         Self {
             database_url,
@@ -85,6 +88,9 @@ impl AppConfig {
             // Execution defaults:
             exec_queue_capacity: 256,
             default_failure_cooldown_ms: 10_000,
+            max_slippage_bps: 75.0,
+            min_warm_up: 20_000,
+            window_size: 10,
         }
     }
 }

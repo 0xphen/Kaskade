@@ -38,7 +38,7 @@ impl MarketPulse for DepthPulse {
     }
 
     fn compute(&self) -> DepthState {
-        // Depth requires an explicit snapshot → enforced by design
+        // Depth requires an explicit snapshot
         DepthState::default()
     }
 

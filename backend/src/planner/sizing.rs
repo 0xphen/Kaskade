@@ -20,7 +20,7 @@ use crate::planner::types::{PlannedAllocation, SizingPolicy, UserIntent};
     fields(
         intent_count = intents.len(),
         total_bid_allocated = field::Empty,
-        market_depth = market.depth_now_in
+        market_depth = market.max_depth
     )
 )]
 pub fn derive_execution_plan(
@@ -33,7 +33,7 @@ pub fn derive_execution_plan(
     }
 
     // Global budget derived from available depth and utilization, bounded by hard cap.
-    let depth_cap = (market.depth_now_in as f64 * policy.depth_utilization)
+    let depth_cap = (market.max_depth as f64 * policy.depth_utilization)
         .floor()
         .max(0.0) as u128;
 
@@ -145,13 +145,12 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    fn market_with_depth(depth_now_in: u128) -> MarketMetricsView {
+    fn market_with_depth(max_depth: u128) -> MarketMetricsView {
         MarketMetricsView {
             ts_ms: 0,
             spread_bps: 0.0,
             trend_drop_bps: 0.0,
-            slippage_bps: 0.0,
-            depth_now_in,
+            max_depth,
         }
     }
 
@@ -342,8 +341,8 @@ mod proptests {
             intents in prop::collection::vec(0..=2_000_000u128, 1..20)
         ) {
             let market = MarketMetricsView {
-                ts_ms: 0, spread_bps: 0.0, trend_drop_bps: 0.0, slippage_bps: 0.0,
-                depth_now_in: market_depth,
+                ts_ms: 0, spread_bps: 0.0, trend_drop_bps: 0.0,
+                max_depth: market_depth,
             };
 
             let p = SizingPolicy {
