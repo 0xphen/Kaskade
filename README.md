@@ -1,221 +1,244 @@
-# ⚡ **Kaskade — Conditional Micro-Swap Execution Engine for TON DeFi**
+# ⚡ Kaskade
 
-**Kaskade** is a **Rust-based, non-custodial execution engine** for the **TON Blockchain** that performs **condition-based micro-swaps**.
+**Conditional Micro-Swap Execution Engine for TON DeFi**
 
-It introduces the first **pulse-driven execution primitive** on TON — enabling users to split a swap into multiple micro-swaps that execute **only when market conditions are optimal**.
+**Kaskade** is a **Rust-based, non-custodial execution engine** for the **TON blockchain** that performs **condition-based micro-swaps**.
 
-Kaskade is built on the core primitives of the STON.fi and Omniston stack — RFQ quotes, route simulation, and gRPC trade building — transforming them into a powerful Rust-based automation engine for TON DeFi.
+Instead of executing swaps on a fixed schedule, Kaskade executes **only when market conditions are favorable** — based on real-time liquidity, spread, trend, and slippage signals.
 
-# **Why Kaskade?**
+At its core, Kaskade introduces a **pulse-driven execution primitive** for TON DeFi.
 
-TON DeFi users often execute swaps during highly unfavourable market conditions:
+---
 
-* Spread widens → bad price
-* Slippage spikes → poor return
-* Local downtrend → buying the top
-* Depth thins → higher execution cost
+## Why Kaskade?
 
-Most current tools (bots, wallets, DCA) are **time-based**, not **market-condition-based**.
+Most TON DeFi users execute swaps during sub-optimal conditions:
 
-**Kaskade is the first TON engine that executes trades automatically when the market says “now is the optimal moment.”**
+* Spread widens → worse price
+* Slippage spikes → lower output
+* Local downtrend → buying into weakness
+* Thin liquidity → high price impact
 
+Existing tools (wallets, bots, DCA strategies) are **time-based**, not **market-condition-based**.
 
-# **Pulse-Based Execution (Market Condition Detection)**
+**Kaskade executes trades when the market itself signals “now is a good moment.”**
 
-Kaskade continuously consumes Omniston RFQ quotes and STON.fi simulations to determine if **a pulse** has occurred — meaning execution is favorable.
+---
 
-A *pulse* is a market micro-signal signaling:
+## Pulse-Based Execution Model
 
-> “This is a good moment to execute a micro-swap.”
+Kaskade continuously ingests market data and computes **pulses**.
 
-# 🧩 **Feature Overview**
+A **pulse** is a short-lived market signal indicating favorable execution conditions.
 
-| Feature                                                       | Status       |
-| ------------------------------------------------------------- | ------------ |
-| Omniston RFQ WebSocket Integration                            | ✔            |
-| STON.fi Swap Simulation API                                   | ✔            |
-| Omniston gRPC `buildTransfer`                                 | ✔            |
-| Spread Pulse                                                  | ✔            |
-| Slippage Pulse                                                | ☐            |
-| Micro-Trend Pulse                                             | ☐            |
-| Scheduler (eligibility + RR selection)                        | ✔            |
-| Execution Engine & Worker Pool                                | ✔            |
-| Session Manager (user strategies)                             | ✔            |
-| Telegram Bot Command Flow                                     | ☐            |
-| Execution Manager Contract (EMC) for non-custodial automation | ☐            |
-| Depth Pulse                                                   | ☐            |
-| Volatility Pulse                                              | ☐            |
-| Imbalance Pulse                                               | ☐            |
-| Backtesting Engine                                            | ☐            |
-| Strategy Studio & Web Dashboard                               | ☐            |
+> “A pulse means the market is currently safe and efficient to trade.”
 
-# Pulse Types
+Each user defines constraints (spread, trend, slippage), and Kaskade executes micro-swaps only when all constraints are satisfied.
 
-| Pulse Type     | Purpose                                                                         |
-| -------------- | ------------------------------------------------------------------------------- |
-| **Spread**     | Executes when the bid–ask spread becomes tight, giving the user a better price. |
-| **Slippage**   | Executes when the simulated output improves, ensuring higher return per swap.   |
-| **Trend**      | Follows short-term micro-momentum to avoid poor entries during local downturns. |
-| **Time-Decay** | Safety fallback that ensures progress even if ideal conditions never appear.    |
-| **Imbalance**  | Reacts to directional liquidity pressure across buy/sell routes.                |
-| **Depth**      | Prioritizes swaps when liquidity depth increases, reducing price impact.        |
-| **Volatility** | Avoids chaotic market periods where execution cost is unpredictable.            |
+---
 
-# **High-Level Architecture**
+## Pulse Types
 
-Kaskade consists of 4 coordinated subsystems:
+| Pulse          | Purpose                                |
+| -------------- | -------------------------------------- |
+| **Spread**     | Avoids wide bid–ask spreads            |
+| **Slippage**   | Ensures acceptable execution output    |
+| **Trend**      | Avoids buying into local downturns     |
+| **Depth**      | Ensures sufficient liquidity           |
+| **Time-Decay** | Safety fallback to guarantee progress  |
+| **Volatility** | Avoids chaotic market conditions       |
+| **Imbalance**  | Detects directional liquidity pressure |
 
-### **1. `market/`**
+---
 
-Streams and processes TON market data.
+## High-Level Architecture
 
-* Connects to **Omniston RFQ WebSocket**
-* Maintains rolling windows for trend detection
-* Computes spreads, mid-price, and volatility using Omniston RFQ data, STON.fi DEX liquidity insights, and Omniston gRPC route information.
-* Normalizes metrics for scheduler
+Kaskade is composed of four coordinated subsystems:
 
-### **2. `scheduler/`**
+### 1. `market/`
 
-Decides *when* to pull the trigger.
+Market data ingestion and signal computation.
 
-* Eligibility checks (spread, slippage, trend, time-Decay, market-imbalance, depth, volatility)
-* Per-pair round-robin selection
-* Cooldowns + rate limits
-* Sends `ExecutionRequest` to executor
+* Polls **STON.fi** pool state
+* Consumes **Omniston RFQ** data
+* Maintains rolling windows
+* Computes spread, trend, and depth pulses
+* Normalizes metrics for scheduling
 
-### **3. `executor/`**
+### 2. `scheduler/`
+
+Decides *when* to execute.
+
+* Applies pulse-based eligibility filters
+* Fair selection (round-robin / DRR)
+* Cooldowns and per-tick caps
+* Emits execution intents
+
+### 3. `executor/`
 
 Turns decisions into real swaps.
 
-* Reloads session state
-* Fetches latest metrics
-* Builds swaps using **Omniston gRPC `buildTransfer`**
-* Generates TonConnect/TX payload
-* Updates session state
-* Sends user notifications
+* Re-validates market conditions
+* Builds swaps using **Omniston gRPC**
+* Produces TonConnect payloads
+* Tracks execution outcomes
 
-### **4. `emc/` — Non-Custodial Execution Manager Contract**
+### 4. `emc/` — Execution Manager Contract
 
-An on-chain contract:
+A non-custodial on-chain contract.
 
-* Holds the user’s approved tokens
-* Stores swap parameters and constraints
-* Accepts backend-triggered micro-swap messages
-* Performs the actual Jetton transfers to **STON.fi DEX**
-* Returns output tokens to the user
-* Allows withdrawal of unused tokens anytime
+* Holds user-approved tokens
+* Executes swaps directly against STON.fi
+* Enforces user constraints on-chain
+* Allows withdrawal at any time
 
-This contract allows **fully automated execution with zero user interaction after setup**.
+**All swaps are executed by the contract — never by backend-signed transactions.**
 
-# **Architecture Diagram**
+---
 
-This diagram reflects the **correct flow**:
+## Non-Custodial Execution (EMC)
 
+The **Execution Manager Contract (EMC)** enables fully automated execution without custody.
+
+### Setup (one-time)
+
+1. User deploys EMC via TonConnect
+2. User deposits Jettons + TON for gas
+3. Execution parameters are locked on-chain
+
+### Automated Execution
+
+* Backend detects pulses
+* Executor sends authorized messages
+* EMC executes swaps against STON.fi
+* Output tokens are returned to the user
+
+### Withdrawal
+
+* User can withdraw remaining funds anytime
+
+---
+
+## STON.fi & Omniston Integration
+
+### Omniston
+
+* RFQ WebSocket
+* Route-aware pricing
+* gRPC `buildTransfer`
+* Multi-hop routing
+
+### STON.fi
+
+* Pool liquidity polling
+* Swap simulation
+* DEX-level execution via EMC
+
+---
+
+# 🧪 Development & Local Setup
+
+## Prerequisites
+
+* Rust (stable)
+* Cargo
+* SQLite
+* SQLx CLI
+
+Install SQLx CLI:
+
+```bash
+cargo install sqlx-cli --no-default-features --features sqlite
 ```
-                           ┌──────────────────────┐
-                           │   User (Telegram)    │
-                           │  Creates Pulse Plan  │
-                           └──────────┬───────────┘
-                                      │
-                                      ▼
-                         (1) TonConnect Deployment + Deposit
-                                      │
-                                      ▼
-                    ┌───────────────────────────────────┐
-                    │    Execution Manager Contract     │
-                    │     (holds tokens non-custodially)│
-                    └─────────────┬─────────────────────┘
-                                  │ Pulse-trigger messages
-                                  ▼
-                   ┌───────────────────────────┐
-                   │        EXECUTOR           │
-                   │  • re-check conditions    │
-                   │  • Omniston buildTransfer │
-                   │  • send FX msg to EMC     │
-                   └───────────┬───────────────┘
-                               │
-                               ▼
-                    ┌───────────────────────────┐
-                    │         SCHEDULER         │
-                    │ • Eligibility filtering   │
-                    │ • Round-robin selection   │
-                    └──────────┬────────────────┘
-                               │ metrics
-                               ▼
-                    ┌───────────────────────────┐
-                    │         MARKET            │
-                    │ • Omniston RFQ stream     │
-                    │ • STON.fi /simulate       │
-                    │ • Trend & spread calc     │
-                    └───────────────────────────┘
+
+---
+
+## Clone & Build
+
+```bash
+git clone https://github.com/your-org/kaskade.git
+cd kaskade
+cargo build
 ```
 
-**Actual swap happens inside the EMC**, not via backend-signed transactions.
+---
 
-# 🔒 **Non-Custodial Execution with EMC**
+## Database Setup (SQLite + SQLx)
 
-The **Execution Manager Contract (EMC)** makes Kaskade *fully automatic* while staying non-custodial.
+### 1️⃣ Set `DATABASE_URL`
 
-### Setup (one-time TonConnect action)
+From the **repo root**:
 
-1. User initiates session from Telegram/CLI
-2. Kaskade backend provides TonConnect payload
-3. User signs:
+```bash
+export DATABASE_URL="sqlite://$(pwd)/backend/dev/kaskade_dev.db"
+```
 
-   * Contract deployment (StateInit)
-   * Token deposit (Jetton transfer)
-4. EMC is deployed and funded with TON for gas
+Verify:
 
-### Automated Execution (hands-off)
+```bash
+echo $DATABASE_URL
+```
 
-* Kaskade reads market data
-* Scheduler triggers pulses
-* Executor sends authorized internal messages to EMC
-* EMC executes micro-swaps directly with **STON.fi DEX**
-* Output tokens are returned to the user’s wallet
+---
 
-### Withdrawal Anytime
+### 2️⃣ Create DB directory and file
 
-* User sends a withdrawal message
-* EMC returns remaining Jettons + unused TON
+```bash
+mkdir -p backend/dev
+touch backend/dev/kaskade_dev.db
+```
 
-All logic is **non-custodial** and **verifiable on-chain**.
+---
 
-## 🛠️ STON.fi & Omniston Integrations
+### 3️⃣ Run migrations
 
-### **Omniston**
-✔ RFQ WebSocket  
-✔ Route-aware pricing  
-✔ gRPC Trade Builder (`buildTransfer`)  
-✔ Multi-hop routing  
-✔ Aggregated liquidity depth  
+```bash
+cargo sqlx migrate run
+```
 
-### **STON.fi**
-✔ `/v1/swap/simulate` for slippage  
-✔ `/v1/pools` for depth analysis  
-✔ `/v1/markets` for volatility inputs  
-✔ DEX contract-level swap calls (via EMC)  
+Verify tables:
 
-## 🗺️ Roadmap
+```bash
+sqlite3 backend/dev/kaskade_dev.db ".tables"
+```
 
-### **Phase 1 - Market-Condition Execution Engine**  
-✔ RFQ stream  
-✔ Spread / Slippage / Trend pulses  
-✔ Scheduler  
-✔ Executor  
-✔ gRPC trade builder  
-✔ STON.fi simulation  
+---
 
-### **Phase 2 — Non-Custodial Automation**  
-⬜ Telegram mini-app
-⬜ Execution Manager Contract  
-⬜ Backend-triggered micro-swap execution  
-⬜ Secure session lifecycle  
-⬜ User withdrawal  
+### 4️⃣ Seed dev data (optional)
 
-### **Phase 3 — DeFi Automation Platform**  
-⬜ All pulses (depth, volatility, slippage, trend, time-Decay, imbalance)  
-⬜ Strategy builder (hedging, rotation)  
-⬜ Backtesting UI  
-⬜ Web dashboard + charts  
-⬜ Multi-DEX support  
+If you have seed migrations, they will run automatically.
+To inspect:
+
+```bash
+sqlite3 backend/dev/kaskade_dev.db "SELECT * FROM sessions LIMIT 5;"
+```
+
+---
+
+## Running the Backend
+
+```bash
+cargo run -p backend
+```
+
+You should see logs indicating:
+
+* Market pollers started
+* Scheduler ticks
+* Market metrics updates
+
+---
+
+## Running Tests
+
+```bash
+cargo test
+```
+
+For backend only:
+
+```bash
+cargo test -p backend
+```
+
+---
