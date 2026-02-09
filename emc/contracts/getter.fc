@@ -1,0 +1,26 @@
+(int) get_enabled() method_id {
+  load_storage();
+  return g_enabled;
+}
+
+(int) get_fee_bps() method_id {
+  load_storage();
+  return g_fee_bps;
+}
+
+(int) get_fee_balance(slice jetton_master) method_id {
+  load_storage();
+  return get_fee_balance(jetton_master);
+}
+
+(int) get_principal_balance(int session_id, slice jetton_master) method_id {
+  load_storage();
+  return get_principal(session_id, jetton_master);
+}
+
+(int) get_session_has_pending(int session_id) method_id {
+  load_storage();
+  cell sc = get_session_cell(session_id);
+  var (active, pool, jetton_master, created_at, has_pending, pswap_id, pamount_in, pfee, pjetton, pat) = unpack_session(sc);
+  return has_pending;
+}

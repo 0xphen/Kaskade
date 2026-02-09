@@ -1,0 +1,48 @@
+(int, int) calc_fee(int amount_total) inline {
+  ;; fee = amount_total * fee_bps / 10000
+  int fee = (amount_total * g_fee_bps) / 10000;
+  int swap_in = amount_total - fee;
+  return (fee, swap_in);
+}
+
+(int) get_principal(int session_id, slice jetton_master) inline {
+  int k = key_principal(session_id, jetton_master);
+  return dict_get_u128(g_principal, k);
+}
+
+() set_principal(int session_id, slice jetton_master, int v) inline {
+  int k = key_principal(session_id, jetton_master);
+  g_principal = dict_set_u128(g_principal, k, v);
+}
+
+(int) get_fee_balance(slice jetton_master) inline {
+  int k = key_by_jetton(jetton_master);
+  return dict_get_u128(g_fees, k);
+}
+
+() set_fee_balance(slice jetton_master, int v) inline {
+  int k = key_by_jetton(jetton_master);
+  g_fees = dict_set_u128(g_fees, k, v);
+}
+
+() credit_principal(int session_id, slice jetton_master, int delta) inline {
+  int cur = get_principal(session_id, jetton_master);
+  set_principal(session_id, jetton_master, cur + delta);
+}
+
+() debit_principal(int session_id, slice jetton_master, int delta) inline {
+  int cur = get_principal(session_id, jetton_master);
+  req(cur >= delta, ERR_INSUFFICIENT_FUNDS);
+  set_principal(session_id, jetton_master, cur - delta);
+}
+
+() credit_fee(slice jetton_master, int delta) inline {
+  int cur = get_fee_balance(jetton_master);
+  set_fee_balance(jetton_master, cur + delta);
+}
+
+() debit_fee(slice jetton_master, int delta) inline {
+  int cur = get_fee_balance(jetton_master);
+  req(cur >= delta, ERR_INTERNAL_UNDERFLOW);
+  set_fee_balance(jetton_master, cur - delta);
+}

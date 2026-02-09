@@ -1,0 +1,19 @@
+;; ===== Wallet registry =====
+;; g_wallets: jetton_master_hash -> emc_jetton_wallet_addr
+
+(slice) must_get_emc_wallet(slice jetton_master) inline {
+  int k = key_by_jetton(jetton_master);
+  var (ok, w) = dict_get_addr?(g_wallets, k);
+  req(ok, ERR_WALLET_NOT_SET);
+  return w;
+}
+
+() verify_jetton_sender_wallet(slice jetton_master, slice msg_sender) inline {
+  slice expected = must_get_emc_wallet(jetton_master);
+  req(addr_eq(expected, msg_sender), ERR_BAD_JETTON_SENDER);
+}
+
+() set_emc_wallet(slice jetton_master, slice wallet_addr) inline {
+  int k = key_by_jetton(jetton_master);
+  g_wallets = dict_set_addr(g_wallets, k, wallet_addr);
+}

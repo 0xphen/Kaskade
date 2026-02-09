@@ -1,0 +1,32 @@
+int key_principal(int session_id, slice jetton_master) inline {
+  return cell_hash(begin_cell()
+    .store_uint(session_id, 64)
+    .store_slice(jetton_master)
+    .end_cell());
+}
+
+int key_by_jetton(slice jetton_master) inline {
+  return cell_hash(begin_cell()
+    .store_slice(jetton_master)
+    .end_cell());
+}
+
+(int) dict_get_u128(cell d, int key) inline {
+  ;; udict_get? is the correct stdlib function for unsigned dicts
+  var (s, ok) = d.udict_get?(256, key);
+  return ok ? s~load_uint(128) : 0;
+}
+
+cell dict_set_u128(cell d, int key, int v) inline {
+  return d.udict_set_builder(256, key, begin_cell().store_uint(v, 128));
+}
+
+cell dict_set_addr(cell d, int key, slice addr) inline {
+  return d.udict_set_ref(256, key, begin_cell().store_slice(addr).end_cell());
+}
+
+(int, slice) dict_get_addr?(cell d, int key) inline {
+  var (c, ok) = d.udict_get_ref?(256, key);
+  if (~ ok) { return (0, null()); }
+  return (1, c.begin_parse());
+}

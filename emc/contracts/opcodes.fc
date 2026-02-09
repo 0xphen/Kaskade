@@ -1,0 +1,25 @@
+;; ===== Kaskade Execution Vault (KEV) Opcodes =====
+
+;; Jetton standard opcodes (TEP-74 common)
+const int JETTON_OP_TRANSFER          = 0x0f8a7ea5;
+const int JETTON_OP_INTERNAL_TRANSFER = 0x178d4519;
+
+;; Admin
+const OP_CREATE_SESSION     = 0x00000001;
+const OP_SET_ENABLED        = 0x00000002;
+const OP_SET_OPERATOR       = 0x00000003;
+const OP_SET_WALLET         = 0x00000004;  ;; register jetton_master -> emc_jetton_wallet
+
+;; Owner actions
+const OP_WITHDRAW_ALL_USER  = 0x00000010;  ;; withdraw all principal for session input jetton
+
+;; Operator actions
+const OP_EXECUTE_SWAP       = 0x00000020;  ;; start swap (locks funds)
+const OP_SWAP_ACK_SUCCESS   = 0x00000021;  ;; finalize fee-on-success
+const OP_WITHDRAW_FEE       = 0x00000022;  ;; withdraw fee balance for given jetton master
+
+;; Deposit (forward payload op inside jetton internal_transfer)
+const OP_DEPOSIT_FWD        = 0x00000030;
+
+;; Internal tracking (only used for bounced messages originating from our swap call)
+const OP_SWAP_CALL_TAG      = 0x00000040;

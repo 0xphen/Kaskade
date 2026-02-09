@@ -1,0 +1,187 @@
+#include "imports/stdlib.fc";
+
+#include "utils.fc";
+#include "errors.fc";
+#include "opcodes.fc";
+#include "jetton.fc";
+#include "storage.fc";
+#include "dicts.fc";
+#include "wallets.fc";
+#include "sessions.fc";
+#include "accounting.fc";
+#include "swap.fc";
+#include "withdrawals.fc";
+#include "accounting.fc";
+
+() ensure_owner(slice sender) inline {
+  req(addr_eq(sender, g_owner), ERR_NOT_OWNER);
+}
+
+() ensure_operator(slice sender) inline {
+  req(addr_eq(sender, g_operator), ERR_NOT_OPERATOR);
+}
+
+() handle_admin(slice sender, int op, slice body) impure {
+  if (op == OP_CREATE_SESSION) {
+    ensure_owner(sender);
+    int session_id = body~load_uint(64);
+    slice pool = body~load_msg_addr();
+    slice jetton_master = body~load_msg_addr();
+    create_session(session_id, pool, jetton_master);
+    return ();
+  }
+
+  if (op == OP_SET_ENABLED) {
+    ensure_owner(sender);
+    int en = body~load_uint(1);
+    set_enabled(en);
+    return ();
+  }
+
+  if (op == OP_SET_OPERATOR) {
+    ensure_owner(sender);
+    slice op_addr = body~load_msg_addr();
+    slice fee_rcv = body~load_msg_addr();
+    int fee_bps = body~load_uint(16);
+    set_operator(op_addr, fee_rcv, fee_bps);
+    return ();
+  }
+
+  if (op == OP_SET_WALLET) {
+    ensure_owner(sender);
+    slice jetton_master = body~load_msg_addr();
+    slice wallet_addr   = body~load_msg_addr();
+    set_emc_wallet(jetton_master, wallet_addr);
+    return ();
+  }
+
+  throw(ERR_BAD_OP);
+}
+
+() handle_user(slice sender, int op, slice body) impure {
+  if (op == OP_WITHDRAW_ALL_USER) {
+    ensure_owner(sender);
+    withdraw_all_user(body);
+    return ();
+  }
+  throw(ERR_BAD_OP);
+}
+
+() handle_operator(slice sender, int op, slice body) impure {
+  ensure_operator(sender);
+
+  if (op == OP_EXECUTE_SWAP) {
+    exec_swap(body);
+    return ();
+  }
+
+  if (op == OP_SWAP_ACK_SUCCESS) {
+    ack_success(body);
+    return ();
+  }
+
+  if (op == OP_WITHDRAW_FEE) {
+    withdraw_fee(body);
+    return ();
+  }
+
+  throw(ERR_BAD_OP);
+}
+
+() handle_jetton_internal_transfer(slice body, slice msg_sender) impure {
+  ;; body begins AFTER internal_transfer opcode
+  ;; internal_transfer#178d4519 query_id:uint64 amount:uint128 from:MsgAddress response:MsgAddress
+  ;; forward_ton_amount:uint64 forward_payload:(Either Cell ^Cell)
+  int query_id = body~load_uint(64);
+  int amount = body~load_uint(128);
+  slice from = body~load_msg_addr();
+  slice response = body~load_msg_addr();
+  int fwd_ton = body~load_uint(64);
+
+  ;; forward payload
+  int has_ref = body~load_uint(1);
+  slice fp = has_ref ? body~load_ref().begin_parse() : body;
+
+  ;; payload: OP_DEPOSIT_FWD:uint32 session_id:uint64 jetton_master:MsgAddress
+  int fop = fp~load_uint(32);
+  req(fop == OP_DEPOSIT_FWD, ERR_BAD_ARGS);
+  int session_id = fp~load_uint(64);
+  slice jetton_master = fp~load_msg_addr();
+
+  ;; MVP: only owner can deposit
+  req(addr_eq(from, g_owner), ERR_NOT_OWNER);
+
+  ;; verify session exists and jetton matches session input
+  cell sc = get_session_cell(session_id);
+  var (active, pool, input_jm, created_at, has_pending, swap_id, pamount_in, pfee, pjetton, pat) = unpack_session(sc);
+
+  req(addr_eq(input_jm, jetton_master), ERR_JETTON_MISMATCH);
+
+  ;; verify jetton wallet sender matches registry
+  verify_jetton_sender_wallet(jetton_master, msg_sender);
+
+  ;; credit principal
+  credit_principal(session_id, jetton_master, amount);
+}
+
+() recv_internal(int my_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+  slice cs = in_msg_full.begin_parse();
+  int flags = cs~load_uint(4);
+  slice sender = cs~load_msg_addr();
+  
+  ;; Bit 1 of flags is the bounced flag
+  int bounced = flags & 1;
+
+  load_storage();
+
+  if (bounced) {
+    ;; Ensure the body has enough bits to read the opcode/tag
+    if (slice_bits(in_msg_body) >= 32) {
+      on_bounced_swap(in_msg_body);
+    }
+    save_storage();
+    return ();
+  }
+
+  ;; Dispatch based on Opcode
+  ;; Check if the message body is empty (e.g., a simple TON transfer)
+  if (slice_bits(in_msg_body) < 32) {
+    return (); ;; Or throw(ERR_BAD_ARGS) if you don't accept empty transfers
+  }
+
+  int op = in_msg_body~load_uint(32);
+
+  ;; Jetton Notification (Internal Transfer)
+  if (op == JETTON_OP_INTERNAL_TRANSFER) {
+    handle_jetton_internal_transfer(in_msg_body, sender);
+    save_storage();
+    return ();
+  }
+
+  ;; Admin Operations
+  if ((op == OP_CREATE_SESSION) | (op == OP_SET_ENABLED) | (op == OP_SET_OPERATOR) | (op == OP_SET_WALLET)) {
+    handle_admin(sender, op, in_msg_body);
+    save_storage();
+    return ();
+  }
+
+  ;; User Operations
+  if (op == OP_WITHDRAW_ALL_USER) {
+    handle_user(sender, op, in_msg_body);
+    save_storage();
+    return ();
+  }
+
+  ;; Operator Operations
+  if ((op == OP_EXECUTE_SWAP) | (op == OP_SWAP_ACK_SUCCESS) | (op == OP_WITHDRAW_FEE)) {
+    handle_operator(sender, op, in_msg_body);
+    save_storage();
+    return ();
+  }
+
+  throw(ERR_BAD_OP);
+}
+
+() recv_external(slice in_msg_body) impure {
+  throw(ERR_BAD_OP);
+}

@@ -1,0 +1,27 @@
+;; ===== Error codes =====
+
+const ERR_NOT_OWNER            = 100;
+const ERR_NOT_OPERATOR         = 101;
+const ERR_DISABLED             = 102;
+const ERR_BAD_OP               = 103;
+const ERR_BAD_ARGS             = 104;
+
+const ERR_SESSION_NOT_FOUND    = 110;
+const ERR_SESSION_INACTIVE     = 111;
+const ERR_PENDING_EXISTS       = 112;
+const ERR_NO_PENDING           = 113;
+const ERR_SWAP_ID_MISMATCH     = 114;
+
+const ERR_JETTON_MISMATCH      = 120;
+const ERR_WALLET_NOT_SET       = 121;
+const ERR_BAD_JETTON_SENDER    = 122;
+
+const ERR_INSUFFICIENT_FUNDS   = 130;
+const ERR_DEADLINE_EXPIRED     = 131;
+
+const ERR_FEE_BPS_TOO_HIGH     = 140;
+
+const ERR_BOUNCE_BAD_TAG       = 150;
+const ERR_INTERNAL_UNDERFLOW   = 151;
+
+const ERR_WITHDRAW_NOTHING     = 160;

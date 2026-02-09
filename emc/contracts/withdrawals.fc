@@ -1,0 +1,95 @@
+;; ===== Withdraw all principal (owner) =====
+;; No partial withdrawals: sends entire principal for session's input jetton.
+
+() withdraw_all_user(slice body) impure {
+  int session_id = body~load_uint(64);
+  slice to_addr  = body~load_msg_addr();
+
+  cell sc = get_session_cell(session_id);
+  var (active, pool, jetton_master, created_at, has_pending, pswap_id, amount_total, pfee, pjetton, pat) = unpack_session(sc);
+
+  ;; If there is a pending swap, safer to block withdrawals (prevents inconsistent accounting)
+  req(has_pending == 0, ERR_PENDING_EXISTS);
+
+  int bal = get_principal(session_id, jetton_master);
+  req(bal > 0, ERR_WITHDRAW_NOTHING);
+
+  ;; Set principal to 0 before external call (reentrancy-style safety)
+  set_principal(session_id, jetton_master, 0);
+
+  ;; Must know the EMC wallet for this jetton master
+  slice emc_wallet = must_get_emc_wallet(jetton_master);
+
+  ;; Build transfer body to move jettons from EMC wallet to owner-specified address
+  cell fwd = begin_cell().end_cell();
+  cell msg_body = build_jetton_transfer(
+    0,
+    bal,
+    to_addr,
+    g_owner,
+    0,
+    fwd
+  );
+
+  ;; send internal message to EMC jetton wallet
+  int value = 30000000; ;; TON for gas (tune)
+  send_raw_message(
+    begin_cell()
+      .store_uint(0, 2)
+      .store_slice(emc_wallet)
+      .store_uint(value, 64)
+      .store_uint(1, 1)      ;; bounce
+      .store_uint(0, 1)
+      .store_uint(0, 4)
+      .store_uint(0, 4)
+      .store_uint(0, 64)
+      .store_ref(msg_body)
+    .end_cell(),
+    64
+  );
+}
+
+;; ===== Withdraw fee (operator) =====
+;; Withdraws amount (0 => all) to fee_receiver
+
+() withdraw_fee(slice body) impure {
+  slice jetton_master = body~load_msg_addr();
+  int amount = body~load_uint(128); ;; 0 => all
+
+  int cur = get_fee_balance(jetton_master);
+  int w = (amount == 0) ? cur : amount;
+
+  req(w > 0, ERR_WITHDRAW_NOTHING);
+  req(cur >= w, ERR_INSUFFICIENT_FUNDS);
+
+  ;; deduct first
+  set_fee_balance(jetton_master, cur - w);
+
+  slice emc_wallet = must_get_emc_wallet(jetton_master);
+
+  cell fwd = begin_cell().end_cell();
+  cell msg_body = build_jetton_transfer(
+    0,
+    w,
+    g_fee_receiver,
+    g_owner,
+    0,
+    fwd
+  );
+
+  int value = 30000000;
+  send_raw_message(
+    begin_cell()
+      .store_uint(0, 2)
+      .store_slice(emc_wallet)
+      .store_uint(value, 64)
+      .store_uint(1, 1)
+      .store_uint(0, 1)
+      .store_uint(0, 4)
+      .store_uint(0, 4)
+      .store_uint(0, 64)
+      .store_ref(msg_body)
+    .end_cell(),
+    64
+  );
+}

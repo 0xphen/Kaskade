@@ -1,0 +1,18 @@
+;; require helper: Throws an error if condition is false
+() req(int cond, int err) inline {
+  throw_unless(err, cond);
+}
+
+;; Address equality
+int addr_eq(slice a, slice b) inline {
+  return equal_slices_bits(a, b); 
+}
+
+;; Load opcode safely: Returns 0 if the slice is too short (less than 32 bits)
+(int, slice) load_op(slice body) inline {
+  if (slice_bits(body) < 32) {
+    return (0, body);
+  }
+  int op = body~load_uint(32);
+  return (op, body);
+}

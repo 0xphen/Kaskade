@@ -1,17 +1,11 @@
 import { toNano } from '@ton/core';
-import { Main } from '../build/Main/Main_Main';
-import { NetworkProvider } from '@ton/blueprint';
+import { Main } from '../wrappers/Main';
+import { compile, NetworkProvider } from '@ton/blueprint';
 
 export async function run(provider: NetworkProvider) {
-    const main = provider.open(await Main.fromInit());
+    const main = provider.open(Main.createFromConfig({}, await compile('Main')));
 
-    await main.send(
-        provider.sender(),
-        {
-            value: toNano('0.05'),
-        },
-        null,
-    );
+    await main.sendDeploy(provider.sender(), toNano('0.05'));
 
     await provider.waitForDeploy(main.address);
 

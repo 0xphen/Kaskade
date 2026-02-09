@@ -1,0 +1,124 @@
+#include "stdlib.fc";
+
+#include "opcodes.fc";
+
+;; Jetton transfer opcode
+const JETTON_OP_TRANSFER = 0xf8a7ea5;
+
+;; ---------- STORAGE ----------
+
+;; EMC address allowed to call us
+global slice g_emc;
+
+() load_storage() impure {
+  slice ds = get_data().begin_parse();
+  g_emc = ds~load_msg_addr();
+}
+
+() save_storage() impure {
+  builder b = begin_cell();
+  b.store_slice(g_emc);
+  set_data(b.end_cell());
+}
+
+;; ---------- HELPERS ----------
+
+() only_emc(slice sender) inline {
+  if (slice_hash(sender) != slice_hash(g_emc)) {
+    throw(401);
+  }
+}
+
+;; ---------- CORE LOGIC ----------
+
+() handle_swap_call(slice body, slice sender) impure {
+  only_emc(sender);
+
+  ;; Decode EMC payload
+  int session_id = body~load_uint(64);
+  int swap_id    = body~load_uint(64);
+  int amount_in  = body~load_uint(128);
+  int min_out    = body~load_uint(128);
+  int deadline   = body~load_uint(64);
+  slice receiver = body~load_msg_addr();
+  cell payload   = body~load_ref();
+
+  ;; ---------------------------------------------
+  ;; >>> STONFI SPECIFIC SECTION START <<<
+  ;;
+  ;; payload MUST be a fully-formed STON.fi v2
+  ;; swap payload created OFF-CHAIN by backend
+  ;;
+  ;; This adapter does NOT construct swap paths.
+  ;; It only forwards them safely.
+  ;;
+  ;; You must provide:
+  ;;   - STON.fi router address
+  ;;   - Jetton wallet address owned by THIS adapter
+  ;;
+  ;; ---------------------------------------------
+
+  slice stonfi_router = payload.begin_parse()~load_msg_addr();
+  slice adapter_jetton_wallet = payload.begin_parse()~load_msg_addr();
+  cell  stonfi_swap_payload   = payload.begin_parse()~load_ref();
+
+  ;; ---------------------------------------------
+  ;; >>> STONFI SPECIFIC SECTION END <<<
+  ;; ---------------------------------------------
+
+  ;; Build jetton transfer to STON.fi router
+  builder msg = begin_cell();
+
+  msg.store_uint(JETTON_OP_TRANSFER, 32);
+  msg.store_uint(0, 64);                  ;; query_id
+  msg.store_uint(amount_in, 128);         ;; amount
+  msg.store_slice(stonfi_router);         ;; destination
+  msg.store_slice(receiver);              ;; response address (user)
+  msg.store_uint(0, 64);                  ;; forward TON
+  msg.store_uint(1, 1);                   ;; forward payload in ref
+  msg.store_ref(stonfi_swap_payload);     ;; STON.fi payload
+
+  cell body_out = msg.end_cell();
+
+  ;; Send message from adapter's jetton wallet
+  send_raw_message(
+    begin_cell()
+      .store_uint(0, 2)
+      .store_slice(adapter_jetton_wallet)
+      .store_uint(50_000_000, 64) ;; gas
+      .store_uint(1, 1)           ;; bounceable
+      .store_uint(0, 1)
+      .store_uint(0, 4)
+      .store_uint(0, 4)
+      .store_uint(0, 64)
+      .store_ref(body_out)
+    .end_cell(),
+    64
+  );
+}
+
+;; ---------- ENTRY POINT ----------
+
+() recv_internal(int value, cell msg, slice body) impure {
+  load_storage();
+
+  slice sender = get_msg_sender();
+
+  ;; Bounce propagates automatically back to EMC
+  if (get_msg_bounced()) {
+    throw(0);
+  }
+
+  int tag = body~load_uint(32);
+  if (tag == OP_SWAP_CALL_TAG) {
+    handle_swap_call(body, sender);
+    save_storage();
+    return ();
+  }
+
+  throw(400);
+}
+
+() recv_external(slice body) impure {
+  throw(403);
+}

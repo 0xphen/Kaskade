@@ -1,9 +1,16 @@
 import { Blockchain, SandboxContract, TreasuryContract } from '@ton/sandbox';
-import { toNano } from '@ton/core';
-import { Main } from '../build/Main/Main_Main';
+import { Cell, toNano } from '@ton/core';
+import { Main } from '../wrappers/Main';
 import '@ton/test-utils';
+import { compile } from '@ton/blueprint';
 
 describe('Main', () => {
+    let code: Cell;
+
+    beforeAll(async () => {
+        code = await compile('Main');
+    });
+
     let blockchain: Blockchain;
     let deployer: SandboxContract<TreasuryContract>;
     let main: SandboxContract<Main>;
@@ -11,17 +18,11 @@ describe('Main', () => {
     beforeEach(async () => {
         blockchain = await Blockchain.create();
 
-        main = blockchain.openContract(await Main.fromInit());
+        main = blockchain.openContract(Main.createFromConfig({}, code));
 
         deployer = await blockchain.treasury('deployer');
 
-        const deployResult = await main.send(
-            deployer.getSender(),
-            {
-                value: toNano('0.05'),
-            },
-            null,
-        );
+        const deployResult = await main.sendDeploy(deployer.getSender(), toNano('0.05'));
 
         expect(deployResult.transactions).toHaveTransaction({
             from: deployer.address,

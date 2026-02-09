@@ -1,0 +1,136 @@
+;; ===== Swap execution model =====
+;;
+;; - Operator calls OP_EXECUTE_SWAP with: session_id, swap_id, amount_total, min_out, deadline, payload_ref
+;; - Contract locks user funds immediately: principal -= amount_total
+;; - Fee is NOT credited yet (fee-on-success), but fee amount is recorded in pending
+;; - Contract sends a bounceable internal message to session.pool_or_adapter, tagged with OP_SWAP_CALL_TAG
+;; - If that message bounces, contract restores principal and clears pending
+;; - If swap succeeds, operator must send OP_SWAP_ACK_SUCCESS to finalize:
+;;   fee_balance += fee, clear pending
+;;
+;; NOTE: pool_or_adapter SHOULD be either:
+;; - your own adapter contract that knows how to talk to STON.fi router, OR
+;; - a receiver that accepts our tagged message format.
+;;
+;; This makes bounce handling deterministic and safe.
+() send_swap_call(slice target, int session_id, int swap_id, int swap_in, int min_out, int deadline, cell payload) impure {
+  builder b = begin_cell();
+  b.store_uint(OP_SWAP_CALL_TAG, 32);
+  b.store_uint(session_id, 64);
+  b.store_uint(swap_id, 64);
+  b.store_uint(swap_in, 128);
+  b.store_uint(min_out, 128);
+  b.store_uint(deadline, 64);
+  b.store_slice(g_owner);
+  b.store_ref(payload);
+  cell body = b.end_cell();
+
+  int value = 30000000; ;; 0.03 TON
+
+  send_raw_message(
+    begin_cell()
+      .store_uint(0, 2)
+      .store_slice(target)
+      .store_uint(value, 64)
+      .store_uint(1, 1) 
+      .store_uint(0, 1)
+      .store_uint(0, 4)
+      .store_uint(0, 4)
+      .store_uint(0, 64)
+      .store_ref(body)
+    .end_cell(),
+    64
+  );
+}
+
+() exec_swap(slice body) impure {
+  req(g_enabled == 1, ERR_DISABLED);
+
+  int session_id = body~load_uint(64);
+  int swap_id    = body~load_uint(64);
+  int amount_total = body~load_uint(128);
+  int min_out    = body~load_uint(128);
+  int deadline   = body~load_uint(64);
+  cell payload   = body~load_ref();
+
+  req(now() <= deadline, ERR_DEADLINE_EXPIRED);
+
+  cell sc = get_session_cell(session_id);
+  var (active, pool, jetton_master, created_at, has_pending, pswap_id, pamount_in, pfee, pjetton, pat) = unpack_session(sc);
+
+  req(active == 1, ERR_SESSION_INACTIVE);
+  req(has_pending == 0, ERR_PENDING_EXISTS);
+
+  var (fee, swap_in) = calc_fee(amount_total);
+  req(swap_in > 0, ERR_BAD_ARGS);
+
+  ;; lock funds now
+  debit_principal(session_id, jetton_master, amount_total);
+
+  cell sc2 = pack_session(
+    active, 
+    pool, 
+    jetton_master, 
+    created_at,
+    1,               ;; has_pending
+    swap_id, 
+    amount_total, 
+    fee, 
+    jetton_master, 
+    now()
+  );
+  put_session_cell(session_id, sc2);
+
+  ;; send swap call (bounceable)
+  send_swap_call(pool, session_id, swap_id, swap_in, min_out, deadline, payload);
+}
+
+() ack_success(slice body) impure {
+  int session_id = body~load_uint(64);
+  int swap_id    = body~load_uint(64);
+
+  cell sc = get_session_cell(session_id);
+
+  var (active, pool, jetton_master, created_at, has_pending, pswap_id, pamount_in, fee, pjetton, pat) = unpack_session(sc);
+
+  req(has_pending == 1, ERR_NO_PENDING);
+  req(pswap_id == swap_id, ERR_SWAP_ID_MISMATCH);
+
+  ;; finalize fee-on-success: credit fee now
+  credit_fee(jetton_master, fee);
+
+  ;; 9th arg is null() because it expects a slice.
+  cell sc2 = pack_session(
+    active, pool, jetton_master, created_at,
+    0, 0, 0, 0, null(), 0
+  );
+  put_session_cell(session_id, sc2);
+}
+
+() on_bounced_swap(slice bounced_body) impure {
+  int tag = bounced_body~load_uint(32);
+  req(tag == OP_SWAP_CALL_TAG, ERR_BOUNCE_BAD_TAG);
+
+  int session_id = bounced_body~load_uint(64);
+  int swap_id    = bounced_body~load_uint(64);
+
+  cell sc = get_session_cell(session_id);
+
+  var (active, pool, jetton_master, created_at, has_pending, pswap_id, amount_total, pfee, pjetton, pat) = unpack_session(sc);
+
+  req(has_pending == 1, ERR_NO_PENDING);
+  req(pswap_id == swap_id, ERR_SWAP_ID_MISMATCH);
+
+  ;; restore locked funds
+  credit_principal(session_id, jetton_master, amount_total);
+
+  cell sc2 = pack_session(
+    active, pool, jetton_master, created_at,
+    0, 0, 0, 0, null(), 0
+  );
+  put_session_cell(session_id, sc2);
+}
+
+  ;; var (active, pool, jetton_master, created_at, has_pending, pswap_id, pamount_total, pfee, pmin_out, pdeadline, pending_at) = unpack_session(sc);
+
+    ;; var (active, pool, jetton_master, created_at, has_pending, pswap_id, amount_total, fee, min_out, deadline, pending_at) = unpack_session(sc);

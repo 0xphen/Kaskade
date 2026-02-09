@@ -1,0 +1,28 @@
+() create_session(int session_id, slice pool_or_adapter, slice input_jetton_master) impure {
+  ;; active=1, no pending
+  cell sc = pack_session(
+    1,                   ;; active
+    pool_or_adapter,     ;; pool
+    input_jetton_master, ;; input_jetton
+    now(),               ;; created_at
+    0,                   ;; has_pending
+    0,                   ;; swap_id
+    0,                   ;; amount_in
+    0,                   ;; fee
+    null(),              ;; pending_jetton (MUST be slice/null, not 0)
+    0                    ;; pending_at
+  );
+  ;; Use the ~ variant to update the global dictionary properly
+  g_sessions~udict_set_ref(64, session_id, sc);
+}
+
+() set_enabled(int en) impure {
+  g_enabled = en;
+}
+
+() set_operator(slice operator_addr, slice fee_receiver, int fee_bps) impure {
+  req(fee_bps <= 500, ERR_FEE_BPS_TOO_HIGH); ;; max 5% in MVP
+  g_operator = operator_addr;
+  g_fee_receiver = fee_receiver;
+  g_fee_bps = fee_bps;
+}

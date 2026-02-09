@@ -1,0 +1,24 @@
+;; ===== Jetton standard opcodes (TEP-74 common) =====
+const int JETTON_OP_TRANSFER = 0x0f8a7ea5;
+
+;; Build a jetton transfer message body
+(cell) build_jetton_transfer(
+  int query_id,
+  int amount,
+  slice destination,
+  slice response_destination,
+  int forward_ton_amount,
+  cell forward_payload
+) inline {
+  return begin_cell()
+    .store_uint(JETTON_OP_TRANSFER, 32)
+    .store_uint(query_id, 64)
+    .store_coins(amount)
+    .store_slice(destination)
+    .store_slice(response_destination)
+    .store_maybe_ref(null())
+    .store_coins(forward_ton_amount)
+    .store_uint(1, 1)
+    .store_ref(forward_payload)
+  .end_cell();
+}
